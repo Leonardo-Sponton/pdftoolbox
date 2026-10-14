@@ -13,6 +13,7 @@ mod tasks;
 mod theme;
 mod thumbs;
 mod tool_page;
+mod unlock;
 mod widgets;
 
 use std::cell::RefCell;

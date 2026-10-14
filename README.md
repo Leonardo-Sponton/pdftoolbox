@@ -78,10 +78,10 @@ file, and updates as you type.
 | **Compress PDF** | Lossless (qpdf) or with image downsampling (Ghostscript) at 150 ppi, 96 ppi or a custom resolution; estimates the result size before running; shows the savings and skips the output when there is no gain |
 | **Number pages** | 6 positions, formats `1` · `1 / 10` · `Página 1 de 10`, starting number, text size, choose the pages (`2-` skips the cover) |
 | **Watermark** | Diagonal or horizontal text, color, opacity, size, choose the pages |
-| **Annotate and sign** | Text, today's date, highlights that keep the text readable, frames, and an image of your signature (light paper background removed); drag to place or use the keyboard; repeat on every page. A visual signature only — not a cryptographic digital signature |
+| **Annotate and sign** | Text, today's date, highlights that keep the text readable, frames, and an image of your signature (light paper background removed); drag to place or use the keyboard; zoom in on the page; repeat on every page. A visual signature only — not a cryptographic digital signature |
 | **Edit metadata** | Title, author, subject, keywords; shows creator, producer and dates; or wipe all metadata before sharing |
-| **PDF to text** | UTF-8 `.txt`, reading order or keeping the layout, with a preview; scanned PDFs are detected instead of producing an empty file |
-| **OCR** | Makes scanned PDFs searchable and copyable (Portuguese and English): the scanned images stay untouched and an invisible text layer is added on top (a few KB per page); pages that already have text are skipped; sideways or upside-down pages are detected and turned upright. Scans are flagged on the home screen |
+| **PDF to text** | UTF-8 `.txt`, reading order or keeping the layout, with a preview; scanned pages can be recognized (OCR) on the way, and only the `.txt` is saved |
+| **OCR** | Makes scanned PDFs searchable and copyable in any language installed for Tesseract (Portuguese + English by default): the scanned images stay untouched and an invisible text layer is added on top (a few KB per page); pages that already have text are skipped; tilted scans (up to 15°) are read from a straightened copy; sideways or upside-down pages are detected and turned upright. Scans are flagged on the home screen |
 | **Office to PDF** | Word, Excel, PowerPoint, LibreOffice, RTF, CSV and TXT, through your installed LibreOffice, isolated from the network |
 | **Protect with password** | AES-256; optional print/copy/edit restrictions with a separate permissions password |
 | **Remove password** | For PDFs whose password you know; author restrictions only come off with the permissions password |
@@ -110,6 +110,10 @@ the status of every feature are in [FEATURE_MATRIX.md](FEATURE_MATRIX.md).
 - Passwords stay in memory only and reach qpdf through private temporary
   files, never on the command line. Nothing ever tries to guess or bypass a
   password.
+- **Password-protected PDFs work in every tool:** the app asks for the
+  password and works on a temporary unlocked copy kept in memory
+  (`$XDG_RUNTIME_DIR`) and deleted on exit. The result is saved without a
+  password, and the app says so.
 
 Details in [SECURITY.md](SECURITY.md).
 
@@ -242,7 +246,7 @@ you can open the new file or show it in its folder with one click.
 | | **Alt+←** | Back |
 | | **Ctrl+Q** | Quit |
 | Previews | **Tab**, arrows, **Enter** | Move between thumbnails and mark/unmark pages |
-| | **Space** (or right-click) | Enlarge the page; **←**/**→** browse, **Esc** closes |
+| | **Space** (or right-click) | Enlarge the page; **←**/**→** browse, **+**/**−**/**0** or **Ctrl+wheel** zoom, **Esc** closes |
 | Organizer | **Ctrl+R** / **Ctrl+Shift+R** | Rotate right / left |
 | | **Ctrl+D** | Duplicate |
 | | **Delete** | Delete pages |
@@ -252,6 +256,7 @@ you can open the new file or show it in its folder with one click.
 | | **Space** (or double-click) | Enlarge the page |
 | | **Ctrl+Z** | Undo |
 | | **Ctrl+S** | Save |
+| Annotate | **Ctrl++** / **Ctrl+−** / **Ctrl+0**, **Ctrl+wheel** | Zoom in / out / fit; drag outside the annotations to pan |
 
 ## Privacy you can check
 
@@ -297,10 +302,11 @@ Times include verifying the result and writing it safely.
   1.10, Wayland). The Debian/Ubuntu/Fedora/openSUSE instructions above follow
   those distributions' package names but have not been tested on real
   machines yet. Reports are welcome.
-- **Password-protected PDFs** can be unlocked with **Remove password** (you
-  need the password). The other tools don't accept them directly yet; they
-  explain why and point to Remove password. The app will never try to bypass
-  unknown passwords.
+- **Password-protected PDFs** need their password. Results made from them are
+  saved without a password (protect them again with **Protect with
+  password**). If the author restricted printing, copying or editing, the
+  permissions password is required. The app will never try to bypass unknown
+  passwords.
 - Compression with downsampling rewrites the document with Ghostscript. Check
   the result on PDFs with forms, links or attachments.
 - "Images to PDF" with the "same as image" page size assumes 96 DPI.
@@ -309,8 +315,10 @@ Times include verifying the result and writing it safely.
   French, German) work; symbols such as ✓ and other scripts (Cyrillic, Greek,
   CJK…) are refused with an explanation.
 - OCR quality depends on the scan. Expect mistakes in small print, stains and
-  handwriting; pages tilted more than about 4° are recognized poorly (there is
-  no automatic deskew yet). Only Portuguese and English are offered.
+  handwriting. On very tilted pages, search and copy work, but the selection
+  highlight may sit slightly above or below the ends of each line. Other
+  languages need their Tesseract data package (the OCR tool shows the
+  command).
 - Not yet available: image watermarks, editing existing text, forms and
   digital signatures. See the [roadmap](FEATURE_MATRIX.md).
 

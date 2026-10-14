@@ -47,6 +47,22 @@ fn jobs_root() -> PathBuf {
     cache_dir().join("tarefas")
 }
 
+/// Onde ficam as cópias desbloqueadas de PDFs com senha: na pasta de
+/// execução do usuário (`$XDG_RUNTIME_DIR`, em memória e só dele) quando
+/// existe, para o conteúdo sem criptografia não ir para o disco; senão,
+/// junto das tarefas.
+pub fn unlocked_root() -> PathBuf {
+    std::env::var_os("XDG_RUNTIME_DIR")
+        .map(PathBuf::from)
+        .filter(|p| p.is_absolute() && p.is_dir())
+        .map(|p| p.join("pdftoolbox").join("desbloqueados"))
+        .unwrap_or_else(|| cache_dir().join("desbloqueados"))
+}
+
+fn temp_roots() -> [PathBuf; 2] {
+    [jobs_root(), unlocked_root()]
+}
+
 /// Diretório temporário exclusivo de uma tarefa.
 pub struct JobDir {
     path: PathBuf,
@@ -92,7 +108,13 @@ impl Drop for JobDir {
 /// Remove diretórios de tarefas deixados por processos que já terminaram
 /// (por exemplo, após uma queda do programa).
 pub fn cleanup_stale_jobs() {
-    let Ok(entries) = fs::read_dir(jobs_root()) else { return };
+    for root in temp_roots() {
+        cleanup_stale_in(&root);
+    }
+}
+
+fn cleanup_stale_in(root: &Path) {
+    let Ok(entries) = fs::read_dir(root) else { return };
     for entry in entries.flatten() {
         let name = entry.file_name().to_string_lossy().into_owned();
         let alive = name
@@ -110,11 +132,13 @@ pub fn cleanup_stale_jobs() {
 /// de encerrar os motores: tarefas interrompidas não deixam páginas
 /// renderizadas e outros temporários para trás.
 pub fn cleanup_own_jobs() {
-    let Ok(entries) = fs::read_dir(jobs_root()) else { return };
     let prefix = format!("{}-", std::process::id());
-    for entry in entries.flatten() {
-        if entry.file_name().to_string_lossy().starts_with(&prefix) {
-            let _ = fs::remove_dir_all(entry.path());
+    for root in temp_roots() {
+        let Ok(entries) = fs::read_dir(root) else { continue };
+        for entry in entries.flatten() {
+            if entry.file_name().to_string_lossy().starts_with(&prefix) {
+                let _ = fs::remove_dir_all(entry.path());
+            }
         }
     }
 }

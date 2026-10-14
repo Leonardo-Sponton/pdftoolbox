@@ -51,7 +51,7 @@ Diretas:
 | libc | 0.2.190 | MIT OR Apache-2.0 | Encerrar grupos de processos, fuso horário local, sinais |
 | serde_json | 1.0.154 | MIT OR Apache-2.0 | Ler e montar o JSON do qpdf (metadados) |
 
-Árvore completa (109 crates de terceiros, `cargo metadata`, 2026-10-14, v0.4.0):
+Árvore completa (109 crates de terceiros, `cargo metadata`, 2026-10-14, v0.5.0):
 todas permissivas — MIT OR Apache-2.0 e equivalentes (59), MIT (33), variantes
 com Zlib/BSD/Unlicense/0BSD (15), Apache-2.0 WITH LLVM-exception (1) e uma com
 componente Unicode-3.0.

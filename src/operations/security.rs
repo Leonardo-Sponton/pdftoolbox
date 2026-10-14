@@ -5,12 +5,12 @@
 //! comando, para logs ou para mensagens de erro. Não há nenhum mecanismo de
 //! descoberta de senha: sem a senha correta, nada é feito.
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use super::{Destination, Outcome, batch, output_name, verify_pdf};
 use crate::engines::qpdf::{self, Encryption};
 use crate::error::{OpError, OpResult};
-use crate::jobs::JobCtx;
+use crate::jobs::{CancelToken, JobCtx};
 use crate::secret::Secret;
 use crate::storage::{self, JobDir, stem};
 
@@ -147,4 +147,48 @@ pub fn unlock(inputs: &[PathBuf], password: &Secret, dest: &Destination, ctx: &J
         outcome.push(storage::commit(&tmp, &dest.dir, &name)?);
         Ok(())
     })
+}
+
+/// Cópia sem criptografia de um PDF com senha, para as demais ferramentas
+/// trabalharem nela. Fica numa pasta própria (0700) com o mesmo nome do
+/// original — os resultados recebem os nomes de sempre — e é apagada quando
+/// esta estrutura é descartada (ou, depois de uma queda, na abertura seguinte).
+pub struct UnlockedCopy {
+    _dir: JobDir,
+    pub path: PathBuf,
+    pub original: PathBuf,
+}
+
+/// Abre `input` com a senha e grava a cópia desbloqueada. Só aceita PDFs que
+/// exigem senha para abrir; se o autor restringiu impressão, cópia ou
+/// edição, exige a senha de permissões (como “Remover senha”): a senha de
+/// leitura não serve para contornar as restrições.
+pub fn unlocked_copy(input: &Path, password: &Secret, cancel: &CancelToken) -> OpResult<UnlockedCopy> {
+    line_ok(password)?;
+    if qpdf::encryption(input, cancel)? != Encryption::Password {
+        return Err(OpError::NotEncrypted(input.to_path_buf()));
+    }
+    let dir = JobDir::new_in(&storage::unlocked_root())?;
+    let pw_file = dir.file(".senha");
+    storage::write_private(&pw_file, password.expose().as_bytes())?;
+    let check = qpdf::check_password(input, &pw_file, cancel);
+    let result = check.and_then(|check| {
+        if !check.owner && check.restricted {
+            return Err(OpError::OwnerPasswordRequired(input.to_path_buf()));
+        }
+        let total = qpdf::page_count_with_password(input, &pw_file, cancel)?;
+        let name = input.file_name().map(PathBuf::from).unwrap_or_else(|| "documento.pdf".into());
+        let path = dir.path().join(name);
+        qpdf::decrypt(input, &pw_file, &path, cancel)?;
+        if qpdf::encryption(&path, cancel)? != Encryption::None {
+            return Err(OpError::OutputInvalid("a cópia desbloqueada ainda está criptografada".into()));
+        }
+        let pages = qpdf::page_count(&path, cancel)?;
+        if pages != total {
+            return Err(OpError::OutputInvalid(format!("esperava {total} página(s), mas a cópia tem {pages}")));
+        }
+        Ok(path)
+    });
+    let _ = std::fs::remove_file(&pw_file);
+    Ok(UnlockedCopy { _dir: dir, path: result?, original: input.to_path_buf() })
 }

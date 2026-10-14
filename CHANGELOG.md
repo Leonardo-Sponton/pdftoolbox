@@ -1,8 +1,32 @@
 # Changelog
 
-## Não lançado
+## 0.5.0 — 2026-10-14
+
+### Adicionado
+- **PDFs com senha em qualquer ferramenta:** ao adicionar um PDF que exige
+  senha (inclusive no Organizar e no Anotar), um diálogo pede a senha e a
+  ferramenta trabalha numa cópia temporária desbloqueada, guardada na memória
+  (`$XDG_RUNTIME_DIR`) e apagada ao sair. O original não muda; a lista e o
+  resultado avisam que o resultado sai sem senha. Restrições do autor
+  continuam exigindo a senha de permissões.
+- **OCR — correção de inclinação:** o ângulo das linhas é medido na própria
+  imagem e a leitura é feita numa cópia endireitada (a página do PDF não muda).
+  Numa digitalização ruidosa, 100% das palavras até 10° de inclinação (antes,
+  nada era reconhecido a partir de 4°). Páginas deitadas e tortas ao mesmo
+  tempo também são lidas.
+- **OCR — idiomas:** um interruptor para cada idioma instalado no Tesseract
+  (a escolha é lembrada), com o comando para instalar outros.
+- **PDF para texto com OCR:** “Reconhecer texto das páginas digitalizadas”
+  reconhece só as páginas sem texto, numa cópia temporária, e grava apenas o
+  .txt.
+- **Zoom de verdade:** na página ampliada (+, −, 0, botões, Ctrl+roda, pinça)
+  e no Anotar (Ctrl+mais/menos, Ctrl+0, Ctrl+roda, pinça), até 6×, com rolagem,
+  arrastar para mover a vista e a página renderizada de novo com mais
+  resolução.
 
 ### Corrigido
+- A tela inicial dizia que OCR, marca d’água, proteção por senha e conversão
+  de documentos ainda estavam “no roteiro”; agora cita o que realmente falta.
 - **“Sem texto selecionável” só aparece quando é verdade:** o aviso no cartão
   do arquivo (e a sugestão de OCR na tela inicial) olhava só a primeira página,
   então um livro com capa em imagem parecia digitalizado. Agora conta todas as

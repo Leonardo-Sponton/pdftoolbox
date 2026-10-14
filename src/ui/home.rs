@@ -71,13 +71,14 @@ impl ToolCard {
 fn suggestion(files: &[PathBuf], locked: &[PathBuf], scanned: &[PathBuf]) -> Option<ToolId> {
     let count = |a: Accepts| files.iter().filter(|f| catalog::extension_ok(a, f)).count();
     let (pdfs, images, office) = (count(Accepts::Pdf), count(Accepts::Images), count(Accepts::Office));
-    // Um PDF com senha trava as demais ferramentas: desbloquear vem primeiro.
-    let any_locked = files.iter().any(|f| locked.contains(f));
+    // Só PDFs com senha: o mais provável é querer tirar a senha. (As demais
+    // ferramentas também os abrem, pedindo a senha.)
+    let all_locked = files.iter().all(|f| locked.contains(f));
     match (pdfs, images, office) {
         (0, 0, 0) => None,
         (0, _, 0) => Some(ToolId::ImagesToPdf),
         (0, 0, _) => Some(ToolId::OfficeToPdf),
-        (_, 0, 0) if any_locked => Some(ToolId::Unlock),
+        (_, 0, 0) if all_locked => Some(ToolId::Unlock),
         // Só digitalizações: tornar o texto pesquisável vem antes do resto.
         (_, 0, 0) if files.iter().all(|f| scanned.contains(f)) => Some(ToolId::Ocr),
         (1, 0, 0) => Some(ToolId::Organize),
@@ -345,7 +346,7 @@ impl Home {
                 sections.push((cat, sec));
             }
             let note = gtk::Label::builder()
-                .label("Mais ferramentas — OCR, marca d’água, proteção por senha, conversão de documentos do escritório — estão no roteiro do projeto.")
+                .label("Próximas ferramentas no roteiro do projeto: redação definitiva, formulários, PDF/A e comparação de documentos.")
                 .wrap(true)
                 .xalign(0.0)
                 .build();
@@ -655,7 +656,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn scans_suggest_ocr_but_passwords_come_first() {
+    fn scans_suggest_ocr_and_locked_pdfs_suggest_unlock() {
         let (scan, typed, locked) =
             (PathBuf::from("/a/scan.pdf"), PathBuf::from("/a/b.pdf"), PathBuf::from("/a/c.pdf"));
         let scanned = [scan.clone()];
@@ -663,6 +664,7 @@ mod tests {
         assert_eq!(suggestion(&[scan.clone(), typed.clone()], &[], &scanned), Some(ToolId::Merge));
         assert_eq!(suggestion(&[typed], &[], &scanned), Some(ToolId::Organize));
         let both = [scan, locked.clone()];
-        assert_eq!(suggestion(&both, &[locked], &scanned), Some(ToolId::Unlock));
+        assert_eq!(suggestion(&both, std::slice::from_ref(&locked), &scanned), Some(ToolId::Merge));
+        assert_eq!(suggestion(std::slice::from_ref(&locked), std::slice::from_ref(&locked), &[]), Some(ToolId::Unlock));
     }
 }

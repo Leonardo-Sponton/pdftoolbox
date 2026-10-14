@@ -264,7 +264,7 @@ impl PagePreview {
                 p.set_cells(0);
                 p.show_message(Some(
                     "🔒 Este PDF está protegido por senha, então as páginas não podem ser mostradas. \
-                     Use “Remover senha” com a senha do documento e abra a cópia desbloqueada.",
+                     Adicione-o de novo e digite a senha quando ela for pedida.",
                 ));
                 p.notify_loaded();
                 return;
@@ -719,7 +719,7 @@ impl TextPreview {
                     me.scroll.set_visible(false);
                     me.note.set_text(
                         "Nenhuma página tem texto selecionável — o PDF parece ser uma digitalização (imagem). \
-                         Use antes a ferramenta “OCR — reconhecer texto” e extraia o texto do PDF que ela criar.",
+                         O texto só será extraído com “Reconhecer texto das páginas digitalizadas (OCR)” ligado.",
                     );
                     me.note.set_visible(true);
                 }

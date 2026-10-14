@@ -353,6 +353,14 @@ impl Organizer {
         self.save.set_sensitive(false);
         let o = self.clone();
         glib::spawn_future_local(async move {
+            // PDF com senha: pede a senha e abre uma cópia desbloqueada.
+            let Some(app) = o.app.upgrade() else { return };
+            let Some(path) = super::unlock::prepare(&app, vec![path]).await.into_iter().next() else {
+                o.stack.set_visible_child_name(if o.input.borrow().is_some() { "grade" } else { "vazio" });
+                o.action_bar.set_revealed(o.input.borrow().is_some());
+                o.save.set_sensitive(o.input.borrow().is_some());
+                return;
+            };
             let p = path.clone();
             let result = widgets::blocking(move || -> OpResult<(u32, JobDir)> {
                 let n = qpdf::page_count(&p, &CancelToken::new())?;
@@ -374,7 +382,7 @@ impl Organizer {
         if let Some(page) = self.nav_page.upgrade() {
             page.set_title(&format!("Organizar — {}", display_name(&path)));
         }
-        *self.dest_dir.borrow_mut() = path.parent().map(Path::to_path_buf);
+        *self.dest_dir.borrow_mut() = super::unlock::original(&path).parent().map(Path::to_path_buf);
         self.total.set(total);
         *self.items.borrow_mut() = (1..=total).map(|page| PageItem { page, rotation: 0 }).collect();
         *self.saved.borrow_mut() = self.items.borrow().clone();

@@ -6,6 +6,8 @@
 src/
 ├── lib.rs            núcleo (sem GTK) — testável isoladamente
 │   ├── catalog.rs    catálogo de ferramentas exibido na interface (só as reais)
+│   ├── deskew.rs     OCR: mede a inclinação das linhas (perfil de projeção) e
+│   │                 endireita a imagem; leva pontos de volta à original
 │   ├── engines/      adaptadores de executáveis externos
 │   │   ├── mod.rs    Tool, detecção no PATH, versão, execução com cancelamento
 │   │   ├── qpdf.rs   montar páginas, girar, otimizar, verificar, contar páginas,
@@ -42,6 +44,7 @@ build.rs              compila data/resources (ícones simbólicos) em GResource
     ├── thumbs.rs     miniaturas e dados dos arquivos, em segundo plano, com cache em memória
     ├── theme.rs      paleta (MyNotes) gerada em CSS para libadwaita 1.5 e 1.6+
     ├── tasks.rs      lista de tarefas da sessão
+    ├── unlock.rs     PDFs com senha: diálogo e cópias desbloqueadas da sessão
     ├── dialogs.rs    dependências, sobre
     ├── settings.rs   preferências (tema, recentes, última pasta)
     └── widgets.rs    seletores de arquivo, utilitários
@@ -95,6 +98,28 @@ para evitar ciclos. O organizador reaproveita as células do `GtkFlowBox` em
 vez de recriá-las: `remove_all()` seguido de navegação por teclado causava
 falha de segmentação dentro do GTK 4.24 (cursor inválido).
 
+## PDFs com senha
+
+`operations::unlocked_copy` abre o PDF com a senha (arquivo 0600, apagado em
+seguida), recusa a senha de abertura quando o autor restringiu ações (como
+“Remover senha”) e grava uma cópia sem criptografia com o mesmo nome, numa
+pasta 0700 em `storage::unlocked_root()` (`$XDG_RUNTIME_DIR`, em memória). Na
+interface, `ui/unlock.rs` troca cada PDF com senha que entra numa ferramenta
+pela cópia (`prepare`), guarda as cópias da sessão (reaproveitadas enquanto o
+original não muda) e informa o original (`original`) para o destino padrão e
+as dicas. As operações não sabem de nada disso: recebem um PDF comum.
+
+## Zoom
+
+A página ampliada (`page_zoom.rs`) e o Anotar põem a página numa
+`ScrolledWindow`; o zoom muda o tamanho pedido pela página (o `PageThumb` ou
+a área de desenho) e, depois do layout, as barras de rolagem são acertadas
+para o ponto sob o ponteiro ficar parado. Quando a ampliação para de mudar,
+a página é renderizada de novo com o lado que ela ocupa na tela (até 5000
+px); só a página atual fica guardada em alta resolução. No Anotar, a
+`Viewport` tem `scroll-to-focus` desligado: focar a área de desenho rolaria
+para o canto da página.
+
 ## Como acrescentar uma ferramenta
 
 1. Implemente a operação em `operations/` (função pura que recebe `JobCtx`,
@@ -140,6 +165,16 @@ digitalização, e o Poppler quebra linhas inclinadas (a 1,2° “declaro” vir
 linha de base só, com as palavras esticadas (`Tz`) sobre a posição delas na
 imagem; a fonte é a `pdf.ttf` do Tesseract (sem desenho), com CID = UTF-16 e
 ToUnicode identidade. O qpdf sobrepõe a camada só às páginas reconhecidas.
+
+Inclinação: antes de ler, `deskew::analyze` projeta os pixels escuros em
+ângulos de −15° a 15° e fica com o de faixas mais nítidas (as linhas de
+texto). Se passa de 0,3°, a leitura é feita numa cópia endireitada (tela
+ampliada, fundo branco) e o centro de cada palavra volta ao sistema da página
+por `Rotation::to_original`. A camada continua horizontal por linha: texto
+girado ou palavras em degraus fazem o Poppler embaralhar a ordem (testado),
+então a linha usa a linha de base do meio dela. A mesma medição feita na
+imagem girada 90° revela páginas deitadas (as faixas ficam nítidas só nela)
+antes de qualquer leitura.
 
 Páginas deitadas ou de cabeça para baixo: se a primeira leitura tem linhas na
 vertical ou confiança baixa, a detecção de orientação (`--psm 0`) decide quanto

@@ -16,8 +16,8 @@ use pdftoolbox::error::display_name;
 use pdftoolbox::jobs::{self, CancelToken, JobEvent};
 use pdftoolbox::operations::{
     self, CUSTOM_DPI, CompressLevel, Destination, DocFields, Estimate, ImageFormat, ImageLayout, MetadataChange,
-    NumberFormat, NumberStyle, OcrLanguage, OcrOptions, Outcome, PageSize, Position, Request, Restrictions, Secret,
-    SplitMode, WatermarkStyle, human_size, unsupported_chars,
+    NumberFormat, NumberStyle, OcrOptions, Outcome, PageSize, Position, Request, Restrictions, Secret, SplitMode,
+    WatermarkStyle, human_size, unsupported_chars,
 };
 use pdftoolbox::preview::Plan;
 use pdftoolbox::{OpError, OpResult, pages, stamp};
@@ -79,10 +79,14 @@ enum Options {
     },
     Text {
         layout: adw::SwitchRow,
+        /// Reconhecer (OCR) as páginas digitalizadas antes de extrair.
+        ocr: adw::SwitchRow,
+        /// Idiomas do OCR: os escolhidos na ferramenta OCR, se instalados.
+        ocr_languages: Rc<RefCell<Vec<String>>>,
     },
     Office,
     Ocr {
-        language: adw::ComboRow,
+        languages: Rc<LanguageRows>,
         skip: adw::SwitchRow,
         straighten: adw::SwitchRow,
     },
@@ -134,6 +138,31 @@ impl CompressRows {
 impl Drop for CompressRows {
     fn drop(&mut self) {
         self.stop();
+    }
+}
+
+/// Idiomas do OCR: um interruptor por idioma instalado no Tesseract.
+struct LanguageRows {
+    row: adw::ExpanderRow,
+    switches: RefCell<Vec<(String, adw::SwitchRow)>>,
+}
+
+impl LanguageRows {
+    fn selected(&self) -> Vec<String> {
+        self.switches.borrow().iter().filter(|(_, s)| s.is_active()).map(|(c, _)| c.clone()).collect()
+    }
+
+    fn update_subtitle(&self) {
+        let chosen = self.selected();
+        let text = if self.switches.borrow().is_empty() {
+            "Nenhum idioma instalado".to_string()
+        } else if chosen.is_empty() {
+            "Nenhum escolhido".to_string()
+        } else {
+            let names: Vec<String> = chosen.iter().map(|c| operations::language_name(c)).collect();
+            names.join(", ")
+        };
+        self.row.set_subtitle(&text);
     }
 }
 
@@ -639,25 +668,39 @@ fn build_options(info: &ToolInfo, group: &adw::PreferencesGroup) -> Options {
         ToolId::PdfToText => {
             let layout =
                 switch("Manter o layout", "Preserva colunas e espaçamento; desligado, segue a ordem de leitura", false);
+            let ocr = switch(
+                "Reconhecer texto das páginas digitalizadas (OCR)",
+                "Lendo os idiomas instalados…",
+                Tool::Tesseract.find().is_some(),
+            );
+            ocr.set_sensitive(false);
             group.set_description(Some(
-                "Só o texto selecionável é extraído. Para digitalizações (imagens), use antes a ferramenta \
-                 “OCR — reconhecer texto”.",
+                "O texto selecionável é extraído como está. Páginas digitalizadas (imagens) só têm texto com o \
+                 reconhecimento ligado; ele é feito numa cópia temporária e só o .txt é gravado.",
             ));
             group.add(&layout);
-            Options::Text { layout }
+            group.add(&ocr);
+            Options::Text { layout, ocr, ocr_languages: Rc::default() }
         }
         ToolId::Ocr => {
-            let language = combo("Idioma do documento", &["Português e inglês", "Português", "Inglês"], 0);
+            let languages = adw::ExpanderRow::builder()
+                .title("Idiomas do documento")
+                .subtitle("Lendo os idiomas instalados…")
+                .build();
             let skip = switch("Pular páginas que já têm texto", "Evita texto duplicado na busca e na cópia", true);
             let straighten = switch(
                 "Endireitar páginas deitadas ou de cabeça para baixo",
                 "Gira a página inteira, sem perda, quando o texto está de lado",
                 true,
             );
-            group.add(&language);
+            group.add(&languages);
             group.add(&skip);
             group.add(&straighten);
-            Options::Ocr { language, skip, straighten }
+            Options::Ocr {
+                languages: Rc::new(LanguageRows { row: languages, switches: RefCell::default() }),
+                skip,
+                straighten,
+            }
         }
         ToolId::OfficeToPdf => {
             let isolated = if pdftoolbox::engines::network_isolation_available() {
@@ -999,7 +1042,8 @@ pub fn build(app: &Rc<AppState>, info: &'static ToolInfo, files: Vec<PathBuf>) -
             let r = refresh.clone();
             password.connect_changed(move |_| r());
         }
-        Options::Text { layout } => {
+        Options::Text { layout, ocr, ocr_languages } => {
+            page.load_text_ocr(ocr.clone(), ocr_languages.clone());
             let p = Rc::downgrade(&page);
             layout.connect_active_notify(move |l| {
                 if let Some(p) = p.upgrade()
@@ -1009,9 +1053,10 @@ pub fn build(app: &Rc<AppState>, info: &'static ToolInfo, files: Vec<PathBuf>) -
                 }
             });
         }
-        Options::Ocr { skip, .. } => {
+        Options::Ocr { languages, skip, .. } => {
             let r = refresh.clone();
             skip.connect_active_notify(move |_| r());
+            page.load_languages(languages.clone(), refresh.clone());
         }
         Options::Compress(c) => {
             let p = Rc::downgrade(&page);
@@ -1150,7 +1195,27 @@ impl ToolPage {
         matches!(self.info.id, ToolId::Merge | ToolId::ImagesToPdf)
     }
 
+    /// Acrescenta arquivos; PDFs com senha entram como cópia desbloqueada
+    /// (a senha é pedida antes), exceto em “Remover senha”.
     pub fn add_files(self: &Rc<Self>, incoming: Vec<PathBuf>) {
+        if incoming.is_empty() {
+            return;
+        }
+        let Some(app) = self.app.upgrade() else { return };
+        if self.info.id == ToolId::Unlock || self.info.accepts != Accepts::Pdf {
+            self.add_ready_files(incoming);
+            return;
+        }
+        let p = Rc::downgrade(self);
+        glib::spawn_future_local(async move {
+            let ready = super::unlock::prepare(&app, incoming).await;
+            if let Some(p) = p.upgrade() {
+                p.add_ready_files(ready);
+            }
+        });
+    }
+
+    fn add_ready_files(self: &Rc<Self>, incoming: Vec<PathBuf>) {
         if incoming.is_empty() {
             return;
         }
@@ -1195,9 +1260,15 @@ impl ToolPage {
         let ordered = self.info.multiple && matches!(self.info.id, ToolId::Merge | ToolId::ImagesToPdf);
         for (i, path) in files.iter().enumerate() {
             let is_pdf = self.info.accepts == Accepts::Pdf;
-            let subtitle = self.file_info.borrow().get(path).map(|f| f.line(is_pdf)).unwrap_or_else(|| "Lendo…".into());
+            let unlock_tool = self.info.id == ToolId::Unlock;
+            let subtitle = self
+                .file_info
+                .borrow()
+                .get(path)
+                .map(|f| file_line(path, f, is_pdf, unlock_tool))
+                .unwrap_or_else(|| "Lendo…".into());
             let row = widgets::plain_row(&display_name(path), &subtitle);
-            row.set_tooltip_text(Some(&path.to_string_lossy()));
+            row.set_tooltip_text(Some(&super::unlock::original(path).to_string_lossy()));
             if ordered && files.len() > 1 {
                 let n = gtk::Label::new(Some(&(i + 1).to_string()));
                 n.add_css_class("badge");
@@ -1257,7 +1328,7 @@ impl ToolPage {
         if let Some(preview) = &self.preview {
             preview.set_files(&files);
         }
-        if let (Some(t), Options::Text { layout }) = (&self.text_preview, &self.options) {
+        if let (Some(t), Options::Text { layout, .. }) = (&self.text_preview, &self.options) {
             t.update(files.first().map(PathBuf::as_path), layout.is_active());
         }
         if let Options::Metadata(m) = &self.options {
@@ -1287,6 +1358,96 @@ impl ToolPage {
             }
         }
         self.refresh_preview();
+    }
+
+    /// PDF para texto: o OCR usa os idiomas escolhidos na ferramenta OCR
+    /// (ou português e inglês), entre os instalados.
+    fn load_text_ocr(&self, row: adw::SwitchRow, languages: Rc<RefCell<Vec<String>>>) {
+        if Tool::Tesseract.find().is_none() {
+            row.set_subtitle(&format!("Requer o Tesseract: {}", Tool::Tesseract.install_command()));
+            return;
+        }
+        let saved = self.app.upgrade().map(|a| a.settings.borrow().ocr_languages.clone()).unwrap_or_default();
+        glib::spawn_future_local(async move {
+            let installed =
+                widgets::blocking(|| operations::installed_languages(&CancelToken::new()).unwrap_or_default()).await;
+            let mut chosen: Vec<String> = installed.iter().filter(|c| saved.contains(c)).cloned().collect();
+            if chosen.is_empty() {
+                chosen = installed.iter().filter(|c| ["por", "eng"].contains(&c.as_str())).cloned().collect();
+            }
+            if chosen.is_empty() {
+                chosen = installed.iter().take(1).cloned().collect();
+            }
+            if chosen.is_empty() {
+                row.set_subtitle("Nenhum idioma do Tesseract instalado");
+                row.set_active(false);
+                return;
+            }
+            let names: Vec<String> = chosen.iter().map(|c| operations::language_name(c).to_lowercase()).collect();
+            row.set_subtitle(&format!(
+                "Só nas páginas sem texto · em {} (idiomas da ferramenta OCR) · leva alguns segundos por página",
+                names.join(" e ")
+            ));
+            *languages.borrow_mut() = chosen;
+            row.set_sensitive(true);
+        });
+    }
+
+    /// OCR: um interruptor por idioma instalado, ligados os da última vez
+    /// (ou português e inglês).
+    fn load_languages(&self, rows: Rc<LanguageRows>, refresh: impl Fn() + Clone + 'static) {
+        if !self.deps_ok {
+            rows.row.set_subtitle("O Tesseract não está instalado");
+            return;
+        }
+        let saved = self.app.upgrade().map(|a| a.settings.borrow().ocr_languages.clone()).unwrap_or_default();
+        let app = self.app.clone();
+        glib::spawn_future_local(async move {
+            let installed =
+                widgets::blocking(|| operations::installed_languages(&CancelToken::new()).unwrap_or_default()).await;
+            let wanted: Vec<&String> = installed.iter().filter(|c| saved.contains(c)).collect();
+            let defaults = ["por", "eng"];
+            for code in &installed {
+                let on = if wanted.is_empty() {
+                    defaults.contains(&code.as_str()) || (installed.len() == 1)
+                } else {
+                    saved.contains(code)
+                };
+                let switch = adw::SwitchRow::builder().title(operations::language_name(code)).active(on).build();
+                if operations::language_name(code) != *code {
+                    switch.set_subtitle(code);
+                }
+                let (r, rows_weak, app) = (refresh.clone(), Rc::downgrade(&rows), app.clone());
+                switch.connect_active_notify(move |_| {
+                    if let Some(rows) = rows_weak.upgrade() {
+                        rows.update_subtitle();
+                        if let Some(app) = app.upgrade() {
+                            let mut s = app.settings.borrow_mut();
+                            s.ocr_languages = rows.selected();
+                            s.save();
+                        }
+                    }
+                    r();
+                });
+                rows.row.add_row(&switch);
+                rows.switches.borrow_mut().push((code.clone(), switch));
+            }
+            let example = if installed.iter().any(|c| c == "spa") { "fra" } else { "spa" };
+            let more = widgets::plain_row(
+                "Outros idiomas",
+                &format!(
+                    "Instale os dados do Tesseract do idioma e reabra esta ferramenta. Exemplo ({}): {}",
+                    operations::language_name(example).to_lowercase(),
+                    operations::language_install(example)
+                ),
+            );
+            more.set_subtitle_selectable(true);
+            more.add_css_class("dim-label");
+            rows.row.add_row(&more);
+            rows.row.set_expanded(installed.is_empty());
+            rows.update_subtitle();
+            refresh();
+        });
     }
 
     /// Preenche os campos com os metadados do arquivo (só ao trocar de arquivo,
@@ -1337,11 +1498,7 @@ impl ToolPage {
         glib::spawn_future_local(async move {
             let facts = thumbs::facts(&path).await;
             let unlock_tool = p.upgrade().is_some_and(|p| p.info.id == ToolId::Unlock);
-            if facts.locked && !unlock_tool {
-                row.set_subtitle("🔒 Protegido por senha — use “Remover senha” antes desta ferramenta");
-            } else {
-                row.set_subtitle(&facts.line(is_pdf));
-            }
+            row.set_subtitle(&file_line(&path, &facts, is_pdf, unlock_tool));
             if facts.problem.is_some() || (facts.locked && !unlock_tool) {
                 row.add_css_class("texto-erro");
             }
@@ -1573,6 +1730,13 @@ impl ToolPage {
                     Ok(None)
                 }
             }
+            Options::Ocr { languages, .. } if languages.selected().is_empty() => {
+                Err(FormIssue::Incomplete(if languages.switches.borrow().is_empty() {
+                    String::new()
+                } else {
+                    "Escolha pelo menos um idioma do documento.".into()
+                }))
+            }
             Options::Ocr { skip, .. } => match self.ocr_counts() {
                 Some((with_text, total)) if with_text == total && skip.is_active() => Err(FormIssue::Incomplete(
                     "Não há páginas para reconhecer. Se o texto existente estiver errado ou ilegível, desligue \
@@ -1704,7 +1868,8 @@ impl ToolPage {
 
     fn update_destination(&self) {
         if !self.dest_custom.get() {
-            let first = self.files.borrow().first().and_then(|f| f.parent().map(Path::to_path_buf));
+            let first =
+                self.files.borrow().first().and_then(|f| super::unlock::original(f).parent().map(Path::to_path_buf));
             *self.dest_dir.borrow_mut() = first;
         }
         self.dest_reset.set_visible(self.dest_custom.get());
@@ -1844,16 +2009,20 @@ impl ToolPage {
             Options::Unlock { password } => {
                 Request::Unlock { inputs: files, password: Secret::new(password.text().to_string()) }
             }
-            Options::Text { layout } => Request::ExtractText { inputs: files, layout: layout.is_active() },
+            Options::Text { layout, ocr, ocr_languages } => Request::ExtractText {
+                inputs: files,
+                layout: layout.is_active(),
+                ocr: (ocr.is_active() && ocr.is_sensitive()).then(|| OcrOptions {
+                    languages: ocr_languages.borrow().clone(),
+                    skip_text_pages: true,
+                    straighten: false,
+                }),
+            },
             Options::Office => Request::OfficeToPdf { inputs: files },
-            Options::Ocr { language, skip, straighten } => Request::Ocr {
+            Options::Ocr { languages, skip, straighten } => Request::Ocr {
                 inputs: files,
                 options: OcrOptions {
-                    language: match language.selected() {
-                        1 => OcrLanguage::Portuguese,
-                        2 => OcrLanguage::English,
-                        _ => OcrLanguage::PortugueseEnglish,
-                    },
+                    languages: languages.selected(),
                     skip_text_pages: skip.is_active(),
                     straighten: straighten.is_active(),
                 },
@@ -2067,8 +2236,17 @@ impl ToolPage {
             "Concluído com falhas"
         };
         let group = adw::PreferencesGroup::builder().title(title).build();
-        if !outcome.notes.is_empty() {
-            group.set_description(Some(&glib::markup_escape_text(&outcome.notes.join("\n"))));
+        let mut notes = outcome.notes.clone();
+        let from_copy = self.files.borrow().iter().any(|f| super::unlock::is_copy(f));
+        if from_copy && !outcome.outputs.is_empty() && self.info.id != ToolId::Protect {
+            notes.push(
+                "O resultado foi salvo sem senha (o original continua protegido). Para protegê-lo, use \
+                 “Proteger com senha”."
+                    .into(),
+            );
+        }
+        if !notes.is_empty() {
+            group.set_description(Some(&glib::markup_escape_text(&notes.join("\n"))));
         }
         let new_button = gtk::Button::builder().label("Começar de novo").valign(gtk::Align::Center).build();
         new_button.add_css_class("flat");
@@ -2121,6 +2299,17 @@ impl ToolPage {
             [one] => self.toast(&format!("Salvo: {}", display_name(&one.path))),
             many => self.toast(&format!("{} arquivos salvos", many.len())),
         }
+    }
+}
+
+/// Linha de detalhes de um arquivo da lista.
+fn file_line(path: &Path, facts: &FileFacts, is_pdf: bool, unlock_tool: bool) -> String {
+    if facts.locked && !unlock_tool {
+        "🔒 Protegido por senha — adicione de novo e digite a senha".into()
+    } else if super::unlock::is_copy(path) {
+        format!("🔓 Aberto com a senha; o resultado sai sem senha · {}", facts.line(is_pdf))
+    } else {
+        facts.line(is_pdf)
     }
 }
 

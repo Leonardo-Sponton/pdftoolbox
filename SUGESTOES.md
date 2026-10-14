@@ -1,23 +1,22 @@
 # Sugestões futuras
 
-Anotações de 2026-10-14 (atualizadas na versão 0.4.0). A situação oficial de cada
+Anotações de 2026-10-14 (atualizadas na versão 0.5.0). A situação oficial de cada
 recurso continua em [FEATURE_MATRIX.md](FEATURE_MATRIX.md); aqui ficam as ideias
 e os próximos passos recomendados, em ordem de prioridade.
 
 ## Fase 2 — o que falta (0.3.0 entregou senha, metadados, numeração, marca d’água, texto e Office)
 
-1. ~~OCR~~ — feito. Próximos passos: **correção de inclinação** (a partir de
-   ~5° o Tesseract mistura linhas; dá para estimar o ângulo pelas linhas da
-   primeira leitura, endireitar a imagem, ler de novo e levar as caixas de
-   volta); mais idiomas (listar os instalados); “PDF para texto” oferecer o OCR
-   direto quando o arquivo é digitalizado.
-2. ~~Anotar e assinatura visual~~ — feito (“Anotar e assinar”). Pendências:
-   **testar o arrastar com o mouse** numa sessão real (aqui só o teclado foi
-   verificado); desfazer agrupando vários toques de seta num passo; zoom na
-   página. ~~Esc no Organizador descartava sem perguntar~~ — corrigido.
-3. **Abrir PDFs com senha direto nas ferramentas** (pedir a senha num diálogo
-   e trabalhar numa cópia temporária desbloqueada), em vez de mandar para
-   “Remover senha”.
+1. ~~OCR~~ — feito, com ~~correção de inclinação~~, ~~escolha entre os
+   idiomas instalados~~ e ~~OCR direto no “PDF para texto”~~. Próximo passo:
+   camada de texto que acompanhe a inclinação sem quebrar a extração (hoje,
+   em páginas muito tortas, a seleção destacada pode sair um pouco
+   deslocada nas pontas da linha; busca e cópia funcionam).
+2. ~~Anotar e assinatura visual~~ — feito (“Anotar e assinar”), com ~~zoom na
+   página~~; ~~arrastar com o mouse~~ verificado pelo usuário. Pendência:
+   desfazer agrupando vários toques de seta num passo.
+3. ~~Abrir PDFs com senha direto nas ferramentas~~ — feito (diálogo de senha e
+   cópia temporária desbloqueada). Ideia: oferecer “manter a mesma senha no
+   resultado”.
 4. **Lote e fluxos** — já há lote por ferramenta; falta encadear (ex.:
    numerar → marca d’água → proteger) num fluxo salvo.
 
@@ -43,16 +42,16 @@ Decisões pendentes:
 - **Estimativa de compressão mais precisa** em PDFs cujas páginas compartilham
   muitos recursos (a amostra copia fontes e imagens comuns para cada página);
   hoje o erro medido foi pequeno nos testes, mas não há garantia nesses casos.
-- **Ampliar com zoom real** (rolar e aproximar além do tamanho da janela) e
-  ampliar também no Anotar.
+- ~~Ampliar com zoom real~~ e ~~zoom no Anotar~~ — feitos.
 - **Organizador com o mesmo visual de “papel”** das novas pré-visualizações
   (`PageThumb`), e girar desenhado de verdade em vez de transformação CSS.
 - **Cache de miniaturas em disco** entre aberturas (hoje o cache é só em
   memória, durante a sessão) — avaliar privacidade: ficaria em `~/.cache`.
 - **Miniaturas mais rápidas de fotos grandes** — decodificar JPEG em escala
   reduzida em vez de abrir a imagem inteira.
-- **Teste automatizado da fila** (limite de 2 tarefas) e do arrastar com mouse
-  no organizador, que ainda não foram validados.
+- **Teste automatizado da fila** (limite de 2 tarefas), que ainda não foi
+  validada. (~~Arrastar com o mouse~~ no Organizar e no Anotar: verificado
+  pelo usuário.)
 
 ## Instalação e distribuição
 

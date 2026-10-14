@@ -19,9 +19,9 @@ pub use crate::stamp::{NumberFormat, NumberStyle, Position, WatermarkStyle};
 pub use compress::{CUSTOM_DPI, CompressLevel, Estimate, estimate as estimate_compression};
 pub use convert::OFFICE_EXTENSIONS;
 pub use edit::{DocFields, MetadataChange, unsupported_chars};
-pub use ocr::{OcrLanguage, OcrOptions, pages_with_text, text_pages};
+pub use ocr::{OcrOptions, installed_languages, language_install, language_name, pages_with_text, text_pages};
 pub use organize::PageItem;
-pub use security::Restrictions;
+pub use security::{Restrictions, UnlockedCopy, unlocked_copy};
 
 use crate::engines::qpdf;
 use crate::error::{OpError, OpResult};
@@ -48,24 +48,86 @@ pub enum SplitMode {
 
 #[derive(Debug, Clone)]
 pub enum Request {
-    Merge { inputs: Vec<PathBuf> },
-    Split { input: PathBuf, mode: SplitMode },
-    Extract { input: PathBuf, spec: String, separate: bool },
-    Remove { input: PathBuf, spec: String },
-    Rotate { inputs: Vec<PathBuf>, spec: Option<String>, angle: i32 },
-    Organize { input: PathBuf, pages: Vec<PageItem> },
-    ImagesToPdf { inputs: Vec<PathBuf>, layout: ImageLayout, one_file: bool },
-    PdfToImages { inputs: Vec<PathBuf>, format: ImageFormat, dpi: u32, quality: u8 },
-    Compress { inputs: Vec<PathBuf>, level: CompressLevel },
-    NumberPages { inputs: Vec<PathBuf>, spec: Option<String>, style: NumberStyle },
-    Watermark { inputs: Vec<PathBuf>, spec: Option<String>, style: WatermarkStyle },
-    Metadata { input: PathBuf, change: MetadataChange },
-    Protect { inputs: Vec<PathBuf>, password: Secret, restrictions: Option<Restrictions> },
-    Unlock { inputs: Vec<PathBuf>, password: Secret },
-    ExtractText { inputs: Vec<PathBuf>, layout: bool },
-    OfficeToPdf { inputs: Vec<PathBuf> },
-    Annotate { input: PathBuf, items: Vec<Annotation> },
-    Ocr { inputs: Vec<PathBuf>, options: OcrOptions },
+    Merge {
+        inputs: Vec<PathBuf>,
+    },
+    Split {
+        input: PathBuf,
+        mode: SplitMode,
+    },
+    Extract {
+        input: PathBuf,
+        spec: String,
+        separate: bool,
+    },
+    Remove {
+        input: PathBuf,
+        spec: String,
+    },
+    Rotate {
+        inputs: Vec<PathBuf>,
+        spec: Option<String>,
+        angle: i32,
+    },
+    Organize {
+        input: PathBuf,
+        pages: Vec<PageItem>,
+    },
+    ImagesToPdf {
+        inputs: Vec<PathBuf>,
+        layout: ImageLayout,
+        one_file: bool,
+    },
+    PdfToImages {
+        inputs: Vec<PathBuf>,
+        format: ImageFormat,
+        dpi: u32,
+        quality: u8,
+    },
+    Compress {
+        inputs: Vec<PathBuf>,
+        level: CompressLevel,
+    },
+    NumberPages {
+        inputs: Vec<PathBuf>,
+        spec: Option<String>,
+        style: NumberStyle,
+    },
+    Watermark {
+        inputs: Vec<PathBuf>,
+        spec: Option<String>,
+        style: WatermarkStyle,
+    },
+    Metadata {
+        input: PathBuf,
+        change: MetadataChange,
+    },
+    Protect {
+        inputs: Vec<PathBuf>,
+        password: Secret,
+        restrictions: Option<Restrictions>,
+    },
+    Unlock {
+        inputs: Vec<PathBuf>,
+        password: Secret,
+    },
+    /// `ocr`: reconhecer antes as páginas digitalizadas (sem texto).
+    ExtractText {
+        inputs: Vec<PathBuf>,
+        layout: bool,
+        ocr: Option<OcrOptions>,
+    },
+    OfficeToPdf {
+        inputs: Vec<PathBuf>,
+    },
+    Annotate {
+        input: PathBuf,
+        items: Vec<Annotation>,
+    },
+    Ocr {
+        inputs: Vec<PathBuf>,
+        options: OcrOptions,
+    },
 }
 
 #[derive(Debug, Clone)]
@@ -117,7 +179,7 @@ pub fn execute(req: Request, dest: &Destination, ctx: &JobCtx) -> OpResult<Outco
             security::protect(&inputs, &password, restrictions.as_ref(), dest, ctx)
         }
         Request::Unlock { inputs, password } => security::unlock(&inputs, &password, dest, ctx),
-        Request::ExtractText { inputs, layout } => convert::extract_text(&inputs, layout, dest, ctx),
+        Request::ExtractText { inputs, layout, ocr } => convert::extract_text(&inputs, layout, ocr.as_ref(), dest, ctx),
         Request::OfficeToPdf { inputs } => convert::office_to_pdf(&inputs, dest, ctx),
         Request::Annotate { input, items } => edit::annotate(&input, &items, dest, ctx),
         Request::Ocr { inputs, options } => ocr::ocr(&inputs, options, dest, ctx),

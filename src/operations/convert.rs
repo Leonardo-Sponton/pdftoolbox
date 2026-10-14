@@ -154,20 +154,41 @@ fn render_pages(
 }
 
 /// Extrai o texto de cada PDF para um `.txt` (UTF-8) ao lado.
-pub fn extract_text(inputs: &[PathBuf], layout: bool, dest: &Destination, ctx: &JobCtx) -> OpResult<Outcome> {
+/// Extrai o texto selecionável de cada PDF. Com `ocr`, as páginas sem texto
+/// (digitalizadas) são reconhecidas antes, numa cópia temporária com a
+/// camada de texto — só o .txt é gravado.
+pub fn extract_text(
+    inputs: &[PathBuf],
+    layout: bool,
+    ocr: Option<&super::OcrOptions>,
+    dest: &Destination,
+    ctx: &JobCtx,
+) -> OpResult<Outcome> {
     let n = inputs.len();
-    batch(inputs, |i, input, outcome| {
+    // Confere idiomas e fonte uma vez, antes do lote.
+    let engine = ocr.map(|o| super::ocr::engine(o, ctx)).transpose()?;
+    let mut used_ocr = false;
+    let mut outcome = batch(inputs, |i, input, outcome| {
         ctx.report(i as f64 / n as f64, &format!("Extraindo texto de {}", stem(input)));
         qpdf::page_count(input, &ctx.cancel)?;
         let job = JobDir::new()?;
+        let mut source = input.to_path_buf();
+        if let (Some(opts), Some(engine)) = (ocr, &engine) {
+            let opts = super::OcrOptions { skip_text_pages: true, straighten: false, ..opts.clone() };
+            if let Some(done) = super::ocr::searchable(input, &opts, engine, &job, ctx, (i, n))? {
+                outcome.notes.push(super::ocr::summary(input, &done, true));
+                source = done.pdf;
+                used_ocr = true;
+            }
+        }
         let tmp = job.file("texto.txt");
-        poppler::extract_text(input, &tmp, layout, &ctx.cancel)?;
+        poppler::extract_text(&source, &tmp, layout, &ctx.cancel)?;
         let text = std::fs::read(&tmp).map_err(|e| OpError::io("ler o texto extraído", e))?;
         // pdftotext separa páginas com form feed; sem nada além disso, não há texto.
         if text.iter().all(|b| b.is_ascii_whitespace() || *b == 0x0C) {
             outcome.notes.push(format!(
                 "“{}” não tem texto selecionável — provavelmente é uma digitalização (imagem). \
-                 Nenhum arquivo foi criado; use antes a ferramenta “OCR — reconhecer texto”.",
+                 Nenhum arquivo foi criado; ligue “Reconhecer texto das páginas digitalizadas (OCR)”.",
                 crate::error::display_name(input)
             ));
             return Ok(());
@@ -179,7 +200,11 @@ pub fn extract_text(inputs: &[PathBuf], layout: bool, dest: &Destination, ctx: &
         };
         outcome.push(storage::commit(&tmp, &dest.dir, &name)?);
         Ok(())
-    })
+    })?;
+    if used_ocr && !outcome.outputs.is_empty() {
+        outcome.notes.push(super::ocr::CAVEAT.into());
+    }
+    Ok(outcome)
 }
 
 /// Extensões aceitas pela conversão de documentos de escritório.

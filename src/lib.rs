@@ -5,6 +5,7 @@
 
 pub mod annotate;
 pub mod catalog;
+pub mod deskew;
 pub mod engines;
 pub mod error;
 pub mod jobs;

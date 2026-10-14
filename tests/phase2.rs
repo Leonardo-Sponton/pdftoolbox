@@ -263,7 +263,7 @@ fn restrictions_only_file_requires_owner_password() {
 fn text_extraction_writes_utf8_and_skips_scans() {
     let sb = Sandbox::new();
     let doc = sb.pdf("relatório.pdf", &["Primeira pagina", "Segunda pagina"]);
-    let out = run(Request::ExtractText { inputs: vec![doc], layout: false }, &sb.dest()).unwrap();
+    let out = run(Request::ExtractText { inputs: vec![doc], layout: false, ocr: None }, &sb.dest()).unwrap();
     let txt = &out.outputs[0].path;
     assert_eq!(txt.file_name().unwrap(), "relatório.txt");
     let text = std::fs::read_to_string(txt).unwrap();
@@ -276,7 +276,8 @@ fn text_extraction_writes_utf8_and_skips_scans() {
         run(Request::ImagesToPdf { inputs: vec![png], layout: ImageLayout::default(), one_file: true }, &sb.dest())
             .unwrap();
     let out =
-        run(Request::ExtractText { inputs: vec![scan.outputs[0].path.clone()], layout: true }, &sb.dest()).unwrap();
+        run(Request::ExtractText { inputs: vec![scan.outputs[0].path.clone()], layout: true, ocr: None }, &sb.dest())
+            .unwrap();
     assert!(out.outputs.is_empty());
     assert!(out.notes[0].contains("OCR"), "{:?}", out.notes);
 }
@@ -301,4 +302,69 @@ fn office_documents_become_pdf() {
     assert!(sheet.contains("Café") && sheet.contains("Preço"), "{sheet}");
     let notes = page_texts(&out.outputs[1].path).join(" ");
     assert!(notes.contains("acentuação"), "{notes}");
+}
+
+#[test]
+fn password_pdfs_open_in_any_tool_through_a_temporary_unlocked_copy() {
+    use pdftoolbox::jobs::CancelToken;
+    use pdftoolbox::operations::unlocked_copy;
+    let sb = Sandbox::new();
+    let doc = sb.pdf("Relatório secreto.pdf", &["Primeira", "Segunda"]);
+    let password = Secret::new("abre-te sésamo");
+    let out =
+        run(Request::Protect { inputs: vec![doc.clone()], password: password.clone(), restrictions: None }, &sb.dest())
+            .unwrap();
+    let locked = out.outputs[0].path.clone();
+    let cancel = CancelToken::new();
+
+    let wrong = unlocked_copy(&locked, &Secret::new("errada"), &cancel);
+    assert!(matches!(wrong, Err(OpError::WrongPassword(_))), "{:?}", wrong.err());
+    let plain = unlocked_copy(&doc, &password, &cancel);
+    assert!(matches!(plain, Err(OpError::NotEncrypted(_))), "{:?}", plain.err());
+
+    let copy = unlocked_copy(&locked, &password, &cancel).unwrap();
+    assert_eq!(copy.original, locked);
+    assert_eq!(copy.path.file_name(), locked.file_name(), "mesmo nome: os resultados ficam com o nome de sempre");
+    assert_eq!(requires_password(&copy.path), 2, "a cópia abre sem senha");
+    let dir = copy.path.parent().unwrap().to_path_buf();
+    use std::os::unix::fs::PermissionsExt;
+    assert_eq!(std::fs::metadata(&dir).unwrap().permissions().mode() & 0o777, 0o700);
+    assert!(std::fs::read_dir(&dir).unwrap().count() == 1, "nenhum arquivo de senha sobrou");
+    assert!(dir.starts_with(pdftoolbox::storage::unlocked_root()));
+
+    // Uma ferramenta qualquer trabalha na cópia; o resultado sai sem senha.
+    let rot = run(Request::Rotate { inputs: vec![copy.path.clone()], spec: Some("2".into()), angle: 90 }, &sb.dest())
+        .unwrap();
+    let rotated = &rot.outputs[0].path;
+    assert_eq!(rotated.parent().unwrap(), sb.root);
+    assert_eq!(rotations(rotated), [0, 90]);
+    assert_eq!(page_texts(rotated), ["Primeira", "Segunda"]);
+    assert_eq!(requires_password(&locked), 0, "o original continua protegido");
+
+    drop(copy);
+    assert!(!dir.exists(), "a cópia desbloqueada é apagada ao descartar");
+}
+
+#[test]
+fn the_open_password_does_not_lift_author_restrictions() {
+    use pdftoolbox::jobs::CancelToken;
+    use pdftoolbox::operations::unlocked_copy;
+    let sb = Sandbox::new();
+    let doc = sb.pdf("doc.pdf", &["Restrito"]);
+    let restrictions =
+        Restrictions { owner: Secret::new("dono"), allow_print: false, allow_copy: true, allow_edit: true };
+    let out = run(
+        Request::Protect { inputs: vec![doc], password: Secret::new("abrir"), restrictions: Some(restrictions) },
+        &sb.dest(),
+    )
+    .unwrap();
+    let locked = &out.outputs[0].path;
+    let cancel = CancelToken::new();
+    let user = unlocked_copy(locked, &Secret::new("abrir"), &cancel);
+    assert!(matches!(user, Err(OpError::OwnerPasswordRequired(_))), "{:?}", user.err());
+    let owner = unlocked_copy(locked, &Secret::new("dono"), &cancel).unwrap();
+    assert_eq!(page_texts(&owner.path), ["Restrito"]);
+    let dir = owner.path.parent().unwrap().to_path_buf();
+    drop(owner);
+    assert!(!dir.exists());
 }

@@ -41,13 +41,24 @@
   autor restringiu impressão, cópia ou edição, só a senha de permissões
   (proprietário) remove as restrições — a senha de abertura não basta. Não há
   tentativa de adivinhar ou quebrar senhas.
+- **PDFs com senha nas demais ferramentas.** Com a senha digitada, a
+  ferramenta trabalha numa cópia desbloqueada guardada em
+  `$XDG_RUNTIME_DIR/pdftoolbox/desbloqueados/<id>` (pasta 0700; em quase todas
+  as distribuições, um tmpfs só do usuário, então o conteúdo sem
+  criptografia não vai para o disco). Sem `$XDG_RUNTIME_DIR`, a cópia fica em
+  `~/.cache/pdftoolbox/desbloqueados`. As cópias duram a sessão e são
+  apagadas ao sair (ou na próxima abertura, depois de uma queda). A regra das
+  restrições vale aqui também: a senha de abertura não basta para trabalhar
+  num documento com restrições do autor. O resultado é gravado sem senha, e a
+  interface avisa isso na lista de arquivos e no resultado.
 - **Processos encerrados de verdade.** Cancelar ou fechar o programa encerra o
   grupo de processos de cada motor, incluindo processos filhos.
 - **Logs.** O programa não grava logs em disco. Os detalhes técnicos mostrados
   em falhas contêm só a saída de erro do motor (que pode incluir o nome do
   arquivo), nunca o conteúdo do documento.
 - **Preferências** (`~/.config/pdftoolbox/config`) guardam apenas tema,
-  ferramentas recentes e a última pasta escolhida — nenhum nome de documento.
+  ferramentas recentes, a última pasta escolhida e os idiomas do OCR —
+  nenhum nome de documento nem senha.
 
 ## Limites de recursos
 
@@ -62,9 +73,9 @@
 - Não há sandbox adicional (seccomp/bubblewrap) em torno dos motores; o
   isolamento é o de processo comum do usuário. Planejado para a distribuição
   em Flatpak.
-- Documentos com senha de abertura só são aceitos por “Remover senha” (com a
-  senha); as demais ferramentas os recusam com orientação. O programa não
-  tenta contornar senhas e nunca o fará.
+- Documentos com senha de abertura só são aceitos com a senha (em “Remover
+  senha” ou pelo diálogo das demais ferramentas). O programa não tenta
+  contornar senhas e nunca o fará.
 - PDFs que só têm restrições do autor (abrem sem senha) ainda são aceitos
   pelas ferramentas estruturais da Fase 1 (o qpdf preserva a criptografia na
   saída); Editar metadados e Proteger os recusam.

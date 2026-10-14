@@ -9,49 +9,81 @@ use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
+use image::GrayImage;
+
 use super::{Destination, Outcome, batch, output_name, verify_pdf};
+use crate::deskew;
 use crate::engines::{install_line, poppler, qpdf, tesseract};
 use crate::error::{OpError, OpResult, display_name};
 use crate::jobs::JobCtx;
 use crate::pdfwriter::{self, InvisiblePage, InvisibleWord};
 use crate::storage::{self, JobDir, stem};
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum OcrLanguage {
-    PortugueseEnglish,
-    Portuguese,
-    English,
+/// Nomes dos idiomas mais comuns do Tesseract (código → nome em português).
+const LANGUAGE_NAMES: &[(&str, &str)] = &[
+    ("por", "Português"),
+    ("eng", "Inglês"),
+    ("spa", "Espanhol"),
+    ("fra", "Francês"),
+    ("deu", "Alemão"),
+    ("ita", "Italiano"),
+    ("nld", "Holandês"),
+    ("cat", "Catalão"),
+    ("glg", "Galego"),
+    ("eus", "Basco"),
+    ("lat", "Latim"),
+    ("pol", "Polonês"),
+    ("ces", "Tcheco"),
+    ("slk", "Eslovaco"),
+    ("hun", "Húngaro"),
+    ("ron", "Romeno"),
+    ("swe", "Sueco"),
+    ("dan", "Dinamarquês"),
+    ("nor", "Norueguês"),
+    ("fin", "Finlandês"),
+    ("ell", "Grego"),
+    ("tur", "Turco"),
+    ("rus", "Russo"),
+    ("ukr", "Ucraniano"),
+    ("ara", "Árabe"),
+    ("heb", "Hebraico"),
+    ("hin", "Hindi"),
+    ("jpn", "Japonês"),
+    ("kor", "Coreano"),
+    ("chi_sim", "Chinês simplificado"),
+    ("chi_tra", "Chinês tradicional"),
+    ("vie", "Vietnamita"),
+    ("tha", "Tailandês"),
+];
+
+/// Nome do idioma para a interface; códigos sem nome conhecido (`frk`,
+/// `script/Latin`…) aparecem como estão.
+pub fn language_name(code: &str) -> String {
+    LANGUAGE_NAMES.iter().find(|(c, _)| *c == code).map_or_else(|| code.to_string(), |(_, n)| n.to_string())
 }
 
-impl OcrLanguage {
-    fn codes(self) -> &'static [&'static str] {
-        match self {
-            OcrLanguage::PortugueseEnglish => &["por", "eng"],
-            OcrLanguage::Portuguese => &["por"],
-            OcrLanguage::English => &["eng"],
-        }
-    }
+/// Idiomas instalados para o Tesseract, com os mais comuns primeiro
+/// (português, inglês e os da tabela acima, nessa ordem).
+pub fn installed_languages(cancel: &crate::jobs::CancelToken) -> OpResult<Vec<String>> {
+    let mut langs = tesseract::languages(cancel)?;
+    let rank = |c: &String| LANGUAGE_NAMES.iter().position(|(k, _)| k == c).unwrap_or(usize::MAX);
+    langs.sort_by(|a, b| rank(a).cmp(&rank(b)).then_with(|| a.cmp(b)));
+    Ok(langs)
 }
 
-fn language_name(code: &str) -> &'static str {
-    match code {
-        "por" => "português",
-        "eng" => "inglês",
-        _ => "outro idioma",
-    }
-}
-
-fn language_install(code: &str) -> String {
+/// Comando que instala os dados de um idioma (exemplo mostrado na interface).
+pub fn language_install(code: &str) -> String {
     install_line(
-        &format!("tesseract-ocr-{code}"),
+        &format!("tesseract-ocr-{}", code.replace('_', "-").to_lowercase()),
         &format!("tesseract-data-{code}"),
         &format!("tesseract-langpack-{code}"),
     )
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct OcrOptions {
-    pub language: OcrLanguage,
+    /// Códigos do Tesseract (`por`, `eng`…), na ordem de preferência.
+    pub languages: Vec<String>,
     /// Não reconhecer páginas que já têm texto selecionável (evita texto
     /// duplicado na busca e na cópia).
     pub skip_text_pages: bool,
@@ -97,100 +129,169 @@ fn plural(n: usize, one: &str, many: &str) -> String {
     format!("{n} {}", if n == 1 { one } else { many })
 }
 
+/// Idiomas conferidos e a fonte da camada de texto, prontos para o OCR.
+pub(super) struct Engine {
+    langs: String,
+    font: Vec<u8>,
+}
+
+pub(super) fn engine(opts: &OcrOptions, ctx: &JobCtx) -> OpResult<Engine> {
+    if opts.languages.is_empty() {
+        return Err(OpError::InvalidRange("Escolha pelo menos um idioma do documento.".into()));
+    }
+    let installed = tesseract::languages(&ctx.cancel)?;
+    if let Some(code) = opts.languages.iter().find(|c| !installed.contains(c)) {
+        return Err(OpError::MissingOcrLanguage {
+            language: language_name(code).to_lowercase(),
+            install: language_install(code),
+        });
+    }
+    Ok(Engine { langs: opts.languages.join("+"), font: tesseract::glyphless_font(&ctx.cancel)? })
+}
+
+/// PDF com a camada de texto, ainda na pasta da tarefa.
+pub(super) struct Searchable {
+    pub pdf: PathBuf,
+    analyzed: usize,
+    recognized: usize,
+    /// Páginas que já tinham texto (e foram puladas, se pedido).
+    already: usize,
+    /// Páginas deitadas ou de cabeça para baixo giradas sem perda.
+    turned: usize,
+    /// Inclinações corrigidas para a leitura.
+    tilted: Vec<f32>,
+}
+
+/// Aviso que acompanha todo resultado de OCR.
+pub(super) const CAVEAT: &str = "O reconhecimento automático pode errar letras e números, principalmente em \
+                                 digitalizações tortas, manchadas ou com letra pequena. Confira trechos \
+                                 importantes antes de copiar ou confiar na busca.";
+
+/// Reconhece as páginas de `input` (as sem texto, se `skip_text_pages`) e
+/// grava em `job` o PDF com a camada de texto. `None` quando não havia o que
+/// reconhecer. `slot` = (índice, total) do arquivo no lote, para o progresso.
+pub(super) fn searchable(
+    input: &Path,
+    opts: &OcrOptions,
+    engine: &Engine,
+    job: &JobDir,
+    ctx: &JobCtx,
+    (i, n): (usize, usize),
+) -> OpResult<Option<Searchable>> {
+    ctx.report(i as f64 / n as f64, &format!("Analisando {}", stem(input)));
+    let total = qpdf::page_count(input, &ctx.cancel)?;
+    let sizes = poppler::page_sizes(input, total, &ctx.cancel)?;
+    let texts = poppler::texts_per_page(input, total, &ctx.cancel)?;
+    let pages = targets(&texts, opts.skip_text_pages);
+    let already = texts.iter().filter(|t| has_text(t)).count();
+    if pages.is_empty() {
+        return Ok(None);
+    }
+    let reads = recognize(input, &pages, &sizes, &engine.langs, job, ctx, i, n)?;
+    let tilted: Vec<f32> = reads.iter().filter_map(|r| r.skew).collect();
+    let layers: Vec<InvisiblePage> = reads.into_iter().map(|r| r.layer).collect();
+
+    ctx.report((i as f64 + 0.97) / n as f64, &format!("Montando {}", stem(input)));
+    // O qpdf encaixa cada página da camada na página de destino, então o
+    // arredondamento de pixels da renderização não desloca o texto.
+    let layer_pdf = job.file("camada-texto.pdf");
+    pdfwriter::invisible_text_pdf(&layer_pdf, &layers, &engine.font)
+        .map_err(|e| OpError::io("gravar a camada de texto temporária", e))?;
+    let mut tmp = job.file("ocr.pdf");
+    qpdf::overlay_pages(input, &layer_pdf, &pages, &tmp, &ctx.cancel)?;
+    let mut turned: Vec<(i32, Vec<u32>)> = Vec::new();
+    if opts.straighten {
+        for (layer, &page) in layers.iter().zip(&pages).filter(|(l, _)| l.rotation != 0) {
+            match turned.iter_mut().find(|(a, _)| *a == layer.rotation as i32) {
+                Some((_, list)) => list.push(page),
+                None => turned.push((layer.rotation as i32, vec![page])),
+            }
+        }
+    }
+    if !turned.is_empty() {
+        let straight = job.file("ocr-endireitado.pdf");
+        qpdf::rotate(&tmp, &turned, &straight, &ctx.cancel)?;
+        tmp = straight;
+    }
+    verify_pdf(&tmp, total, ctx)?;
+
+    let after = poppler::texts_per_page(&tmp, total, &ctx.cancel)?;
+    let recognized = pages.iter().filter(|&&p| has_text(&after[p as usize - 1])).count();
+    if recognized == 0 {
+        return Err(OpError::OutputInvalid(format!(
+            "nenhum texto foi reconhecido em “{}”. Confira se o idioma escolhido é o do documento e se a \
+             digitalização está legível",
+            display_name(input)
+        )));
+    }
+    Ok(Some(Searchable {
+        pdf: tmp,
+        analyzed: pages.len(),
+        recognized,
+        already,
+        turned: turned.iter().map(|(_, p)| p.len()).sum(),
+        tilted,
+    }))
+}
+
+/// ““x.pdf”: texto reconhecido em 3 de 4 páginas analisadas. …”
+pub(super) fn summary(input: &Path, s: &Searchable, skip_text_pages: bool) -> String {
+    let mut note = format!(
+        "“{}”: texto reconhecido em {} de {}.",
+        display_name(input),
+        s.recognized,
+        plural(s.analyzed, "página analisada", "páginas analisadas")
+    );
+    if s.turned > 0 {
+        note.push_str(&if s.turned == 1 {
+            " 1 página estava deitada ou de cabeça para baixo e foi girada.".to_string()
+        } else {
+            format!(" {} páginas estavam deitadas ou de cabeça para baixo e foram giradas.", s.turned)
+        });
+    }
+    if !s.tilted.is_empty() {
+        let max = s.tilted.iter().fold(0.0f32, |m, a| m.max(a.abs()));
+        let angle = format!("{max:.1}").replace('.', ",");
+        note.push_str(&if s.tilted.len() == 1 {
+            format!(" 1 página estava torta ({angle}°) e foi lida numa cópia endireitada.")
+        } else {
+            format!(" {} páginas estavam tortas (até {angle}°) e foram lidas em cópias endireitadas.", s.tilted.len())
+        });
+    }
+    if skip_text_pages && s.already > 0 {
+        note.push_str(&if s.already == 1 {
+            " 1 página já tinha texto e ficou como estava.".to_string()
+        } else {
+            format!(" {} páginas já tinham texto e ficaram como estavam.", s.already)
+        });
+    }
+    note
+}
+
 pub fn ocr(inputs: &[PathBuf], opts: OcrOptions, dest: &Destination, ctx: &JobCtx) -> OpResult<Outcome> {
     if inputs.is_empty() {
         return Err(OpError::NoInput);
     }
-    let installed = tesseract::languages(&ctx.cancel)?;
-    if let Some(code) = opts.language.codes().iter().find(|c| !installed.iter().any(|i| i == *c)) {
-        return Err(OpError::MissingOcrLanguage { language: language_name(code), install: language_install(code) });
-    }
-    let langs = opts.language.codes().join("+");
-    let font = tesseract::glyphless_font(&ctx.cancel)?;
+    let engine = engine(&opts, ctx)?;
     let n = inputs.len();
     let mut outcome = batch(inputs, |i, input, outcome| {
-        ctx.report(i as f64 / n as f64, &format!("Analisando {}", stem(input)));
-        let total = qpdf::page_count(input, &ctx.cancel)?;
-        let sizes = poppler::page_sizes(input, total, &ctx.cancel)?;
-        let texts = poppler::texts_per_page(input, total, &ctx.cancel)?;
-        let pages = targets(&texts, opts.skip_text_pages);
-        let already = texts.iter().filter(|t| has_text(t)).count();
-        if pages.is_empty() {
+        let job = JobDir::new()?;
+        let Some(done) = searchable(input, &opts, &engine, &job, ctx, (i, n))? else {
             outcome.notes.push(format!(
                 "“{}” já tem texto selecionável em todas as páginas; não havia o que reconhecer e nenhum arquivo \
                  foi criado.",
                 display_name(input)
             ));
             return Ok(());
-        }
-        let job = JobDir::new()?;
-        let layers = recognize(input, &pages, &sizes, &langs, &job, ctx, i, n)?;
-
-        ctx.report((i as f64 + 0.97) / n as f64, &format!("Montando {}", stem(input)));
-        // O qpdf encaixa cada página da camada na página de destino, então o
-        // arredondamento de pixels da renderização não desloca o texto.
-        let layer_pdf = job.file("camada-texto.pdf");
-        pdfwriter::invisible_text_pdf(&layer_pdf, &layers, &font)
-            .map_err(|e| OpError::io("gravar a camada de texto temporária", e))?;
-        let mut tmp = job.file("ocr.pdf");
-        qpdf::overlay_pages(input, &layer_pdf, &pages, &tmp, &ctx.cancel)?;
-        let mut turned: Vec<(i32, Vec<u32>)> = Vec::new();
-        if opts.straighten {
-            for (layer, &page) in layers.iter().zip(&pages).filter(|(l, _)| l.rotation != 0) {
-                match turned.iter_mut().find(|(a, _)| *a == layer.rotation as i32) {
-                    Some((_, list)) => list.push(page),
-                    None => turned.push((layer.rotation as i32, vec![page])),
-                }
-            }
-        }
-        if !turned.is_empty() {
-            let straight = job.file("ocr-endireitado.pdf");
-            qpdf::rotate(&tmp, &turned, &straight, &ctx.cancel)?;
-            tmp = straight;
-        }
-        verify_pdf(&tmp, total, ctx)?;
-
-        let after = poppler::texts_per_page(&tmp, total, &ctx.cancel)?;
-        let recognized = pages.iter().filter(|&&p| has_text(&after[p as usize - 1])).count();
-        if recognized == 0 {
-            return Err(OpError::OutputInvalid(format!(
-                "nenhum texto foi reconhecido em “{}”. Confira se o idioma escolhido é o do documento e se a \
-                 digitalização está legível",
-                display_name(input)
-            )));
-        }
+        };
         let base = format!("{} - OCR", stem(input));
         let name = if n == 1 { output_name(dest, &base, "pdf") } else { storage::sanitize_file_name(&base, "pdf") };
-        outcome.push(storage::commit(&tmp, &dest.dir, &name)?);
-        let mut note = format!(
-            "“{}”: texto reconhecido em {recognized} de {}.",
-            display_name(input),
-            plural(pages.len(), "página analisada", "páginas analisadas")
-        );
-        let straightened: usize = turned.iter().map(|(_, p)| p.len()).sum();
-        if straightened > 0 {
-            note.push_str(&if straightened == 1 {
-                " 1 página estava deitada ou de cabeça para baixo e foi girada.".to_string()
-            } else {
-                format!(" {straightened} páginas estavam deitadas ou de cabeça para baixo e foram giradas.")
-            });
-        }
-        if opts.skip_text_pages && already > 0 {
-            note.push_str(&if already == 1 {
-                " 1 página já tinha texto e ficou como estava.".to_string()
-            } else {
-                format!(" {already} páginas já tinham texto e ficaram como estavam.")
-            });
-        }
-        outcome.notes.push(note);
+        outcome.push(storage::commit(&done.pdf, &dest.dir, &name)?);
+        outcome.notes.push(summary(input, &done, opts.skip_text_pages));
         Ok(())
     })?;
     if !outcome.outputs.is_empty() {
-        outcome.notes.push(
-            "O reconhecimento automático pode errar letras e números, principalmente em digitalizações tortas, \
-             manchadas ou com letra pequena. Confira trechos importantes antes de copiar ou confiar na busca."
-                .into(),
-        );
+        outcome.notes.push(CAVEAT.into());
     }
     Ok(outcome)
 }
@@ -226,48 +327,139 @@ fn layer_page(lines: &[Vec<tesseract::Word>], image_px: (u32, u32), dpi: u32, ro
     InvisiblePage { width: image_px.0 as f32 * scale, height: image_px.1 as f32 * scale, rotation, words }
 }
 
-/// Lê uma página renderizada. Se a leitura parecer de uma página deitada ou
-/// de cabeça para baixo (linhas na vertical, confiança baixa), detecta a
-/// orientação, endireita a imagem, lê de novo e fica com a melhor leitura.
-fn read_page(image: &Path, page: u32, langs: &str, dpi: u32, job: &JobDir, ctx: &JobCtx) -> OpResult<InvisiblePage> {
-    let unreadable = || OpError::OutputInvalid(format!("imagem da página {page} ilegível"));
-    let dims = image::image_dimensions(image).map_err(|_| unreadable())?;
-    let first = tesseract::recognize(image, &job.file(&format!("t{page}")), langs, dpi, &ctx.cancel)?;
-    let vertical = first.mostly_vertical();
-    let suspicious = first.words().next().is_some() && (vertical || first.mean_conf() < 60.0);
-    let rotation = if suspicious {
-        match tesseract::orientation(image, &ctx.cancel)? {
-            Some(r @ (90 | 180 | 270)) => Some(r),
+/// Leva as palavras para outro sistema de coordenadas pelo centro de cada
+/// uma (largura e altura ficam: a diferença entre os sistemas é uma
+/// inclinação pequena).
+fn map_words(lines: Vec<Vec<tesseract::Word>>, to: impl Fn(f32, f32) -> (f32, f32)) -> Vec<Vec<tesseract::Word>> {
+    lines
+        .into_iter()
+        .map(|line| {
+            line.into_iter()
+                .map(|w| {
+                    let (cx, cy) = to(w.left + w.width / 2.0, w.top + w.height / 2.0);
+                    tesseract::Word { left: cx - w.width / 2.0, top: cy - w.height / 2.0, ..w }
+                })
+                .collect()
+        })
+        .collect()
+}
+
+fn turned(img: &GrayImage, rotation: u32) -> GrayImage {
+    match rotation {
+        90 => image::imageops::rotate90(img),
+        180 => image::imageops::rotate180(img),
+        270 => image::imageops::rotate270(img),
+        _ => img.clone(),
+    }
+}
+
+/// Uma leitura da página girada `rotation` graus (sentido horário) e, se as
+/// linhas estiverem inclinadas, endireitada. As palavras já voltaram ao
+/// sistema da página girada (sem a correção de inclinação).
+struct Attempt {
+    rotation: u32,
+    skew: Option<f32>,
+    text: tesseract::Recognition,
+    /// Imagem lida (para a detecção de orientação); apagada ao descartar.
+    image: PathBuf,
+}
+
+impl Drop for Attempt {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_file(&self.image);
+    }
+}
+
+fn attempt(
+    original: &GrayImage,
+    rotation: u32,
+    page: u32,
+    langs: &str,
+    dpi: u32,
+    job: &JobDir,
+    ctx: &JobCtx,
+) -> OpResult<Attempt> {
+    let img = turned(original, rotation);
+    let tilt = deskew::estimate(&img).filter(|a| a.abs() >= deskew::MIN_ANGLE);
+    let (img, rot) = match tilt {
+        Some(angle) => {
+            let (straight, rot) = deskew::straighten(&img, angle);
+            (straight, Some(rot))
+        }
+        None => (img, None),
+    };
+    let image = job.file(&format!("p{page}-{rotation}.pgm"));
+    img.save(&image).map_err(|e| OpError::OutputInvalid(format!("não foi possível preparar a página {page}: {e}")))?;
+    drop(img);
+    // A partir daqui o arquivo é apagado junto com a tentativa.
+    let mut result = Attempt { rotation, skew: tilt, text: Default::default(), image };
+    let text = tesseract::recognize(&result.image, &job.file(&format!("t{page}-{rotation}")), langs, dpi, &ctx.cancel)?;
+    result.text = match rot {
+        Some(rot) => tesseract::Recognition { lines: map_words(text.lines, |x, y| rot.to_original(x, y)) },
+        None => text,
+    };
+    Ok(result)
+}
+
+/// Resultado da leitura de uma página.
+#[derive(Debug, Clone)]
+struct PageRead {
+    layer: InvisiblePage,
+    /// Inclinação corrigida para a leitura, em graus.
+    skew: Option<f32>,
+}
+
+/// Lê uma página renderizada. As linhas inclinadas são lidas numa cópia
+/// endireitada da imagem. Páginas deitadas aparecem já na medição das
+/// linhas (elas correm na vertical); de cabeça para baixo, pela leitura
+/// ruim — nos dois casos a orientação é confirmada, a imagem é girada, lida
+/// de novo, e a melhor leitura vence.
+fn read_page(image: &Path, page: u32, langs: &str, dpi: u32, job: &JobDir, ctx: &JobCtx) -> OpResult<PageRead> {
+    let original = image::open(image)
+        .map_err(|_| OpError::OutputInvalid(format!("imagem da página {page} ilegível")))?
+        .into_luma8();
+    let dims = original.dimensions();
+    let lines_flat = deskew::analyze(&original);
+    let lines_side = lines_flat.and_then(|_| deskew::analyze(&image::imageops::rotate90(&original)));
+    // Linhas bem mais nítidas com a página girada 90°: o texto está de lado.
+    let sideways = match (lines_flat, lines_side) {
+        (Some(f), Some(s)) => s.contrast > 1.8 && s.contrast > f.contrast * 1.5,
+        _ => false,
+    };
+    let first = attempt(&original, if sideways { 90 } else { 0 }, page, langs, dpi, job, ctx)?;
+    let vertical = first.text.mostly_vertical();
+    let poor = first.text.words().next().is_some() && (vertical || first.text.mean_conf() < 60.0);
+    let second_turn = if sideways {
+        // 90° ou 270°: se a leitura saiu ruim, era o outro lado.
+        (poor || first.text.words().next().is_none()).then_some(270)
+    } else if poor {
+        let osd = tesseract::orientation(&first.image, &ctx.cancel)?;
+        Some(match osd {
+            Some(r @ (90 | 180 | 270)) => r,
             // Pouco texto para a detecção: a direção das linhas resolve; com
             // linhas horizontais e leitura ruim, testa de cabeça para baixo.
-            _ if vertical => Some(first.vertical_rotation()),
-            _ => Some(180),
-        }
+            _ if vertical => first.text.vertical_rotation(),
+            _ => 180,
+        })
     } else {
         None
     };
-    if let Some(rotation) = rotation {
-        let turned = job.file(&format!("p{page}-endireitada.pgm"));
-        let img = image::open(image).map_err(|_| unreadable())?;
-        let img = match rotation {
-            90 => img.rotate90(),
-            180 => img.rotate180(),
-            _ => img.rotate270(),
-        };
-        img.save(&turned)
-            .map_err(|e| OpError::OutputInvalid(format!("não foi possível girar a página {page}: {e}")))?;
-        drop(img);
-        let second = tesseract::recognize(&turned, &job.file(&format!("u{page}")), langs, dpi, &ctx.cancel);
-        let _ = std::fs::remove_file(&turned);
-        let second = second?;
+    let mut best = first;
+    if let Some(r) = second_turn {
+        let second = attempt(&original, r, page, langs, dpi, job, ctx)?;
         // Linhas verticais não podem ficar como estão (a camada é horizontal):
-        // a leitura endireitada vale, a menos que seja muito pior.
-        let better = if vertical { second.score() * 4 >= first.score() * 3 } else { second.score() > first.score() };
+        // a nova leitura vale, a menos que seja muito pior.
+        let better = if vertical {
+            second.text.score() * 4 >= best.text.score() * 3
+        } else {
+            second.text.score() > best.text.score()
+        };
         if better {
-            return Ok(layer_page(&second.lines, dims, dpi, rotation));
+            best = second;
         }
     }
-    Ok(layer_page(&first.lines, dims, dpi, 0))
+    let layer = layer_page(&best.text.lines, dims, dpi, best.rotation);
+    Ok(PageRead { layer, skew: best.skew })
 }
 
 /// Reconhece as páginas em paralelo (um processo do Tesseract por página).
@@ -282,12 +474,12 @@ fn recognize(
     ctx: &JobCtx,
     file_index: usize,
     file_count: usize,
-) -> OpResult<Vec<InvisiblePage>> {
+) -> OpResult<Vec<PageRead>> {
     const MAX_WORKERS: usize = 4;
     let workers = std::thread::available_parallelism().map_or(1, |n| n.get().saturating_sub(1)).clamp(1, MAX_WORKERS);
     let next = AtomicUsize::new(0);
     let done = AtomicUsize::new(0);
-    let layers: Mutex<Vec<Option<InvisiblePage>>> = Mutex::new(vec![None; pages.len()]);
+    let layers: Mutex<Vec<Option<PageRead>>> = Mutex::new(vec![None; pages.len()]);
     let first_error: Mutex<Option<OpError>> = Mutex::new(None);
     let count = pages.len();
     ctx.report(

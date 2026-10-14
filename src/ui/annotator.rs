@@ -3,6 +3,10 @@
 //! teclado. A prévia é desenhada na hora com as mesmas medidas da operação
 //! (fonte Helvetica e caixas de `pdftoolbox::annotate`); o resultado é gravado
 //! pela camada sobreposta do qpdf (`Request::Annotate`), sem rasterizar.
+//!
+//! A página começa ajustada à área de desenho e pode ser aproximada
+//! (Ctrl+roda, pinça, Ctrl+mais/menos, Ctrl+0 volta a ajustar); aproximada,
+//! arrastar fora das anotações move a vista.
 
 use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
@@ -26,6 +30,10 @@ use super::{AppState, primary_menu, widgets};
 const MM: f32 = 72.0 / 25.4;
 /// Lado maior da página renderizada para a tela, em pixels.
 const RENDER_SIDE: u32 = 1400;
+/// Maior lado renderizado ao aproximar.
+const MAX_RENDER_SIDE: u32 = 5000;
+/// Passo dos botões e teclas de zoom.
+const ZOOM_STEP: f64 = 1.25;
 /// Lado maior da prévia de uma imagem inserida.
 const IMAGE_SIDE: u32 = 900;
 /// Margem em volta da página, em pixels.
@@ -92,6 +100,18 @@ struct Annotator {
     /// Preenchendo o painel por código: ignora os sinais de alteração.
     filling: Cell<bool>,
     canvas: gtk::DrawingArea,
+    /// Rolagem em volta da página (quando aproximada).
+    view: gtk::ScrolledWindow,
+    /// Pixels por ponto escolhidos pelo zoom; `None` = ajustada à área.
+    zoom: Cell<Option<f64>>,
+    zoom_label: gtk::Button,
+    zoom_out: gtk::Button,
+    zoom_in: gtk::Button,
+    /// Ponto a manter sob o ponteiro depois do zoom (fração do conteúdo e
+    /// posição na vista, por eixo).
+    anchor: Cell<Option<super::page_zoom::ZoomAnchor>>,
+    /// Arrastando a vista: posição das barras de rolagem no início.
+    pan: Cell<Option<(f64, f64)>>,
     stack: gtk::Stack,
     error_page: adw::StatusPage,
     save: adw::SplitButton,
@@ -315,8 +335,12 @@ pub fn build(app: &Rc<AppState>, files: Vec<PathBuf>) -> adw::NavigationPage {
         .width_request(360)
         .hexpand(false)
         .build();
+    // Viewport própria: sem `scroll-to-focus`, focar a página (que é maior
+    // que a vista com zoom) não rola para o canto dela.
+    let viewport = gtk::Viewport::builder().child(&canvas).scroll_to_focus(false).build();
+    let view = gtk::ScrolledWindow::builder().child(&viewport).hexpand(true).vexpand(true).build();
     let editor = gtk::Box::new(gtk::Orientation::Horizontal, 0);
-    editor.append(&canvas);
+    editor.append(&view);
     editor.append(&gtk::Separator::new(gtk::Orientation::Vertical));
     editor.append(&side_scroll);
 
@@ -357,6 +381,18 @@ pub fn build(app: &Rc<AppState>, files: Vec<PathBuf>) -> adw::NavigationPage {
     action_bar.set_center_widget(Some(&nav_box));
     let undo_button = widgets::icon_button("edit-undo-symbolic", "Desfazer (Ctrl+Z)");
     action_bar.pack_end(&undo_button);
+    let zoom_out = widgets::icon_button("zoom-out-symbolic", "Afastar (Ctrl+−)");
+    let zoom_in = widgets::icon_button("zoom-in-symbolic", "Aproximar (Ctrl++)");
+    let zoom_label =
+        gtk::Button::builder().label(super::page_zoom::zoom_label(1.0)).tooltip_text("Ajustar à área (Ctrl+0)").build();
+    zoom_label.add_css_class("flat");
+    zoom_label.add_css_class("numeric");
+    let zoom_box = gtk::Box::new(gtk::Orientation::Horizontal, 0);
+    zoom_box.add_css_class("linked");
+    zoom_box.append(&zoom_out);
+    zoom_box.append(&zoom_label);
+    zoom_box.append(&zoom_in);
+    action_bar.pack_start(&zoom_box);
     action_bar.set_revealed(false);
 
     let toolbar = adw::ToolbarView::new();
@@ -381,6 +417,13 @@ pub fn build(app: &Rc<AppState>, files: Vec<PathBuf>) -> adw::NavigationPage {
         drag: RefCell::new(None),
         filling: Cell::new(false),
         canvas: canvas.clone(),
+        view: view.clone(),
+        zoom: Cell::new(None),
+        zoom_label: zoom_label.clone(),
+        zoom_out: zoom_out.clone(),
+        zoom_in: zoom_in.clone(),
+        anchor: Cell::new(None),
+        pan: Cell::new(None),
         stack,
         error_page,
         save: save.clone(),
@@ -453,6 +496,7 @@ pub fn build(app: &Rc<AppState>, files: Vec<PathBuf>) -> adw::NavigationPage {
         None => glib::Propagation::Proceed,
     });
     canvas.add_controller(keys);
+    ann.connect_view_gestures();
     let a = Rc::downgrade(&ann);
     canvas.connect_has_focus_notify(move |_| {
         if let Some(a) = a.upgrade() {
@@ -487,10 +531,24 @@ pub fn build(app: &Rc<AppState>, files: Vec<PathBuf>) -> adw::NavigationPage {
     add("add-highlight", |a| a.add_shape(true));
     add("add-frame", |a| a.add_shape(false));
     add("leave", |a| a.leave());
+    add("zoom-in", |a| a.zoom_by(ZOOM_STEP, None));
+    add("zoom-out", |a| a.zoom_by(1.0 / ZOOM_STEP, None));
+    add("zoom-fit", |a| a.set_zoom(None, None));
     nav_page.insert_action_group("page", Some(&group));
     let shortcuts = gtk::ShortcutController::new();
     shortcuts.set_scope(gtk::ShortcutScope::Global);
-    for (accel, action) in [("<Control>s", "page.run"), ("<Control>z", "page.undo"), ("<Control>o", "page.open")] {
+    for (accel, action) in [
+        ("<Control>s", "page.run"),
+        ("<Control>z", "page.undo"),
+        ("<Control>o", "page.open"),
+        ("<Control>plus", "page.zoom-in"),
+        ("<Control>equal", "page.zoom-in"),
+        ("<Control>KP_Add", "page.zoom-in"),
+        ("<Control>minus", "page.zoom-out"),
+        ("<Control>KP_Subtract", "page.zoom-out"),
+        ("<Control>0", "page.zoom-fit"),
+        ("<Control>KP_0", "page.zoom-fit"),
+    ] {
         shortcuts.add_shortcut(gtk::Shortcut::new(
             gtk::ShortcutTrigger::parse_string(accel),
             Some(gtk::NamedAction::new(action)),
@@ -512,6 +570,9 @@ pub fn build(app: &Rc<AppState>, files: Vec<PathBuf>) -> adw::NavigationPage {
         (&prev, "page.prev"),
         (&next, "page.next"),
         (&undo_button, "page.undo"),
+        (&zoom_in, "page.zoom-in"),
+        (&zoom_out, "page.zoom-out"),
+        (&zoom_label, "page.zoom-fit"),
         (&add_text, "page.add-text"),
         (&add_date, "page.add-date"),
         (&add_image, "page.add-image"),
@@ -693,6 +754,14 @@ impl Annotator {
         self.save.set_sensitive(false);
         let a = self.clone();
         glib::spawn_future_local(async move {
+            // PDF com senha: pede a senha e abre uma cópia desbloqueada.
+            let Some(app) = a.app.upgrade() else { return };
+            let Some(path) = super::unlock::prepare(&app, vec![path]).await.into_iter().next() else {
+                a.stack.set_visible_child_name(if a.input.borrow().is_some() { "editor" } else { "vazio" });
+                a.action_bar.set_revealed(a.input.borrow().is_some());
+                a.save.set_sensitive(a.input.borrow().is_some());
+                return;
+            };
             let p = path.clone();
             let result = widgets::blocking(move || -> OpResult<Vec<(f32, f32)>> {
                 let cancel = CancelToken::new();
@@ -718,7 +787,7 @@ impl Annotator {
         if let Some(page) = self.nav_page.upgrade() {
             page.set_title(&format!("Anotar — {}", display_name(&path)));
         }
-        *self.dest_dir.borrow_mut() = path.parent().map(Path::to_path_buf);
+        *self.dest_dir.borrow_mut() = super::unlock::original(&path).parent().map(Path::to_path_buf);
         *self.sizes.borrow_mut() = sizes;
         *self.input.borrow_mut() = Some(path);
         self.items.borrow_mut().clear();
@@ -726,6 +795,7 @@ impl Annotator {
         self.undo.borrow_mut().clear();
         self.pages.borrow_mut().clear();
         self.selected.set(None);
+        self.zoom.set(None);
         self.page.set(0);
         self.stack.set_visible_child_name("editor");
         self.action_bar.set_revealed(true);
@@ -757,12 +827,15 @@ impl Annotator {
         self.page_label.set_text(&format!("Página {page} de {total}"));
         self.prev.set_sensitive(page > 1);
         self.next.set_sensitive(page < total);
+        self.apply_zoom();
         self.render_page(page);
         self.canvas.queue_draw();
     }
 
     fn render_page(self: &Rc<Self>, page: u32) {
-        if self.pages.borrow().contains_key(&page) {
+        let side = self.wanted_side();
+        let have = self.pages.borrow().get(&page).map_or(0, |s| s.width().max(s.height()) as u32);
+        if have as f64 >= side as f64 * 0.9 {
             return;
         }
         let Some(path) = self.input.borrow().clone() else { return };
@@ -772,8 +845,7 @@ impl Annotator {
         glib::spawn_future_local(async move {
             let pixels = widgets::blocking(move || -> Option<image::RgbaImage> {
                 let dir = JobDir::new().ok()?;
-                let files =
-                    poppler::thumbnails(&path, page, page, RENDER_SIDE, dir.path(), &CancelToken::new()).ok()?;
+                let files = poppler::thumbnails(&path, page, page, side, dir.path(), &CancelToken::new()).ok()?;
                 image::open(files.first()?).ok().map(|i| i.into_rgba8())
             })
             .await;
@@ -786,7 +858,15 @@ impl Annotator {
                 if pages.len() > 8 {
                     pages.clear();
                 }
-                pages.insert(page, surface);
+                // Só a página atual fica guardada em alta resolução.
+                if side > RENDER_SIDE {
+                    pages.retain(|_, s| s.width().max(s.height()) as u32 <= RENDER_SIDE);
+                }
+                // Uma renderização menor que chegue atrasada não substitui a maior.
+                let bigger = pages.get(&page).is_none_or(|old| old.width() < surface.width());
+                if bigger {
+                    pages.insert(page, surface);
+                }
             }
             a.canvas.queue_draw();
         });
@@ -809,12 +889,192 @@ impl Annotator {
         None
     }
 
+    /// Pixels por ponto com a página ajustada à área visível.
+    fn fit_scale(&self) -> f64 {
+        let (pw, ph) = self.page_size();
+        let (w, h) = (self.view.width() as f64, self.view.height() as f64);
+        ((w - 2.0 * MARGIN) / pw as f64).min((h - 2.0 * MARGIN) / ph as f64).max(0.05)
+    }
+
     /// Posição e escala da página na área de desenho: (x, y, pixels por ponto).
     fn layout(&self) -> (f64, f64, f64) {
         let (pw, ph) = self.page_size();
         let (w, h) = (self.canvas.width() as f64, self.canvas.height() as f64);
-        let scale = ((w - 2.0 * MARGIN) / pw as f64).min((h - 2.0 * MARGIN) / ph as f64).max(0.05);
-        ((w - pw as f64 * scale) / 2.0, (h - ph as f64 * scale) / 2.0, scale)
+        let scale = match self.zoom.get() {
+            Some(s) => s,
+            None => ((w - 2.0 * MARGIN) / pw as f64).min((h - 2.0 * MARGIN) / ph as f64).max(0.05),
+        };
+        (((w - pw as f64 * scale) / 2.0).max(MARGIN), ((h - ph as f64 * scale) / 2.0).max(MARGIN), scale)
+    }
+
+    /// Ctrl+roda e pinça aproximam em volta do ponteiro; arrastar fora das
+    /// anotações move a vista quando a página está aproximada.
+    fn connect_view_gestures(self: &Rc<Self>) {
+        let pointer = Rc::new(Cell::new(None::<(f64, f64)>));
+        let motion = gtk::EventControllerMotion::new();
+        let p = pointer.clone();
+        motion.connect_motion(move |_, x, y| p.set(Some((x, y))));
+        let p = pointer.clone();
+        motion.connect_leave(move |_| p.set(None));
+        self.view.add_controller(motion);
+
+        let scroll = gtk::EventControllerScroll::new(gtk::EventControllerScrollFlags::VERTICAL);
+        scroll.set_propagation_phase(gtk::PropagationPhase::Capture);
+        let a = Rc::downgrade(self);
+        scroll.connect_scroll(move |c, _, dy| {
+            let Some(a) = a.upgrade() else { return glib::Propagation::Proceed };
+            if !c.current_event_state().contains(gtk::gdk::ModifierType::CONTROL_MASK) {
+                return glib::Propagation::Proceed;
+            }
+            a.zoom_by(if dy < 0.0 { 1.1 } else { 1.0 / 1.1 }, pointer.get());
+            glib::Propagation::Stop
+        });
+        self.view.add_controller(scroll);
+
+        let pinch = gtk::GestureZoom::new();
+        let start = Rc::new(Cell::new(1.0));
+        let (a, s) = (Rc::downgrade(self), start.clone());
+        pinch.connect_begin(move |_, _| {
+            if let Some(a) = a.upgrade() {
+                s.set(a.zoom.get().unwrap_or_else(|| a.fit_scale()));
+            }
+        });
+        let a = Rc::downgrade(self);
+        pinch.connect_scale_changed(move |g, scale| {
+            if let Some(a) = a.upgrade() {
+                a.set_zoom(Some(start.get() * scale), g.bounding_box_center());
+            }
+        });
+        self.view.add_controller(pinch);
+
+        // A vista não se move com a rolagem (a área de desenho sim), então o
+        // deslocamento do arraste é medido nela.
+        let pan = gtk::GestureDrag::new();
+        let a = Rc::downgrade(self);
+        pan.connect_drag_begin(move |_, _, _| {
+            let Some(a) = a.upgrade() else { return };
+            // O arraste de uma anotação (tratado antes, na área de desenho) tem prioridade.
+            if a.zoom.get().is_some() && a.drag.borrow().is_none() {
+                a.pan.set(Some((a.view.hadjustment().value(), a.view.vadjustment().value())));
+                a.canvas.set_cursor_from_name(Some("grabbing"));
+            }
+        });
+        let a = Rc::downgrade(self);
+        pan.connect_drag_update(move |_, dx, dy| {
+            if let Some(a) = a.upgrade()
+                && let Some((x, y)) = a.pan.get()
+            {
+                a.view.hadjustment().set_value(x - dx);
+                a.view.vadjustment().set_value(y - dy);
+            }
+        });
+        let a = Rc::downgrade(self);
+        pan.connect_drag_end(move |_, _, _| {
+            if let Some(a) = a.upgrade()
+                && a.pan.take().is_some()
+            {
+                a.canvas.set_cursor_from_name(Some("default"));
+            }
+        });
+        self.view.add_controller(pan);
+
+        for horizontal in [true, false] {
+            let adj = if horizontal { self.view.hadjustment() } else { self.view.vadjustment() };
+            let a = Rc::downgrade(self);
+            adj.connect_upper_notify(move |adj| {
+                let Some(a) = a.upgrade() else { return };
+                if let Some(((fx, fy), (px, py))) = a.anchor.get() {
+                    let (f, p) = if horizontal { (fx, px) } else { (fy, py) };
+                    adj.set_value(f * adj.upper() - p);
+                }
+            });
+        }
+    }
+
+    fn zoom_by(self: &Rc<Self>, factor: f64, at: Option<(f64, f64)>) {
+        if self.input.borrow().is_none() {
+            return;
+        }
+        let current = self.zoom.get().unwrap_or_else(|| self.fit_scale());
+        self.set_zoom(Some(current * factor), at);
+    }
+
+    /// Muda o zoom (pixels por ponto; `None` = ajustada), mantendo parado o
+    /// ponto `at` da vista (padrão: o centro).
+    fn set_zoom(self: &Rc<Self>, scale: Option<f64>, at: Option<(f64, f64)>) {
+        let fit = self.fit_scale();
+        let max = fit * super::page_zoom::MAX_ZOOM;
+        let scale = scale.map(|s| s.min(max)).filter(|s| *s > fit * 1.001);
+        let old = self.zoom.replace(scale);
+        let (h, v) = (self.view.hadjustment(), self.view.vadjustment());
+        let (px, py) = at.unwrap_or((h.page_size() / 2.0, v.page_size() / 2.0));
+        let frac =
+            |adj: &gtk::Adjustment, p: f64| if adj.upper() > 0.0 { (adj.value() + p) / adj.upper() } else { 0.5 };
+        if old != scale {
+            self.anchor.set(Some(((frac(&h, px), frac(&v, py)), (px, py))));
+            let a = Rc::downgrade(self);
+            glib::timeout_add_local_once(std::time::Duration::from_millis(150), move || {
+                if let Some(a) = a.upgrade() {
+                    a.anchor.set(None);
+                }
+            });
+        }
+        self.apply_zoom();
+    }
+
+    /// Tamanho da área de desenho, rótulo e resolução conforme o zoom.
+    fn apply_zoom(self: &Rc<Self>) {
+        let (pw, ph) = self.page_size();
+        match self.zoom.get() {
+            Some(s) => {
+                self.canvas.set_content_width((pw as f64 * s + 2.0 * MARGIN).ceil() as i32);
+                self.canvas.set_content_height((ph as f64 * s + 2.0 * MARGIN).ceil() as i32);
+            }
+            None => {
+                self.canvas.set_content_width(0);
+                self.canvas.set_content_height(0);
+            }
+        }
+        let relative = self.zoom.get().map_or(1.0, |s| s / self.fit_scale());
+        self.zoom_label.set_label(&super::page_zoom::zoom_label(relative));
+        self.zoom_out.set_sensitive(self.zoom.get().is_some());
+        self.zoom_in.set_sensitive(relative < super::page_zoom::MAX_ZOOM - 1e-3);
+        self.canvas.queue_draw();
+        // Mais pixels quando o zoom parar de mudar.
+        let a = Rc::downgrade(self);
+        let zoom = self.zoom.get();
+        glib::timeout_add_local_once(std::time::Duration::from_millis(250), move || {
+            if let Some(a) = a.upgrade()
+                && a.zoom.get() == zoom
+            {
+                a.render_page(a.page.get());
+            }
+        });
+    }
+
+    /// Lado da página renderizada que o zoom atual pede.
+    fn wanted_side(&self) -> u32 {
+        let (pw, ph) = self.page_size();
+        let scale = self.zoom.get().unwrap_or_else(|| self.fit_scale()) * self.canvas.scale_factor().max(1) as f64;
+        ((pw.max(ph) as f64 * scale).ceil() as u32).clamp(RENDER_SIDE, MAX_RENDER_SIDE)
+    }
+
+    /// Rola a vista para a anotação selecionada aparecer inteira (zoom).
+    fn reveal_selected(&self) {
+        let (Some(i), Some(_)) = (self.selected.get(), self.zoom.get()) else { return };
+        let Some(item) = self.items.borrow().get(i).cloned() else { return };
+        let (ox, oy, s) = self.layout();
+        let (x, y, w, h) = item.rect_on(self.page_size());
+        let reveal = |adj: gtk::Adjustment, start: f64, len: f64| {
+            let (lo, hi) = (start - MARGIN, start + len + MARGIN);
+            if lo < adj.value() {
+                adj.set_value(lo);
+            } else if hi > adj.value() + adj.page_size() {
+                adj.set_value((hi - adj.page_size()).min(lo));
+            }
+        };
+        reveal(self.view.hadjustment(), ox + x as f64 * s, w as f64 * s);
+        reveal(self.view.vadjustment(), oy + y as f64 * s, h as f64 * s);
     }
 
     fn draw(self: &Rc<Self>, cr: &cairo::Context, _w: f64, _h: f64) {
@@ -1038,6 +1298,7 @@ impl Annotator {
                         item.y += dy / size.1;
                         keep_inside(item, size);
                     });
+                    self.reveal_selected();
                     glib::Propagation::Stop
                 }
                 None => glib::Propagation::Proceed,
@@ -1293,6 +1554,11 @@ impl Annotator {
     fn select(self: &Rc<Self>, index: Option<usize>) {
         self.selected.set(index);
         self.refresh_panel();
+        // Pelo teclado ou pela lista, a vista acompanha; com o mouse, não
+        // rola embaixo do ponteiro.
+        if self.drag.borrow().is_none() {
+            self.reveal_selected();
+        }
         self.canvas.queue_draw();
     }
 

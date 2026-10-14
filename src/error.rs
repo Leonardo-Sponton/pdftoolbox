@@ -46,7 +46,7 @@ pub enum OpError {
     OutputInvalid(String),
     /// Dados do idioma do OCR não instalados (nome do idioma, comando).
     MissingOcrLanguage {
-        language: &'static str,
+        language: String,
         install: String,
     },
     Cancelled,
@@ -147,8 +147,8 @@ impl fmt::Display for OpError {
             }
             OpError::PasswordProtected(file) => write!(
                 f,
-                "“{}” está protegido por senha. Use a ferramenta “Remover senha” com a senha do \
-                 documento e depois aplique esta ferramenta à cópia desbloqueada.",
+                "“{}” está protegido por senha. Adicione-o de novo à ferramenta e digite a senha \
+                 quando ela for pedida, ou use “Remover senha” para gravar uma cópia sem senha.",
                 display_name(file)
             ),
             OpError::WrongPassword(file) => write!(
@@ -159,7 +159,7 @@ impl fmt::Display for OpError {
             OpError::OwnerPasswordRequired(file) => write!(
                 f,
                 "A senha informada abre “{}”, mas o autor restringiu impressão, cópia ou edição. \
-                 Para remover a proteção é preciso a senha de permissões (do proprietário).",
+                 Para trabalhar nele ou remover a proteção, é preciso a senha de permissões (do proprietário).",
                 display_name(file)
             ),
             OpError::NotEncrypted(file) => {
