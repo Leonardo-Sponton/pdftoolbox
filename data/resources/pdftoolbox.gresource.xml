@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<gresources>
+  <gresource prefix="/io/github/leonardo_sponton/PDFToolbox">
+    <file>icons/scalable/actions/pdftoolbox-organizar-symbolic.svg</file>
+    <file>icons/scalable/actions/pdftoolbox-mesclar-symbolic.svg</file>
+    <file>icons/scalable/actions/pdftoolbox-dividir-symbolic.svg</file>
+    <file>icons/scalable/actions/pdftoolbox-extrair-symbolic.svg</file>
+    <file>icons/scalable/actions/pdftoolbox-remover-symbolic.svg</file>
+    <file>icons/scalable/actions/pdftoolbox-girar-symbolic.svg</file>
+    <file>icons/scalable/actions/pdftoolbox-imagens-para-pdf-symbolic.svg</file>
+    <file>icons/scalable/actions/pdftoolbox-pdf-para-imagens-symbolic.svg</file>
+    <file>icons/scalable/actions/pdftoolbox-comprimir-symbolic.svg</file>
+  </gresource>
+</gresources>

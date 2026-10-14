@@ -1,0 +1,12 @@
+[Desktop Entry]
+Type=Application
+Name=PDFToolbox
+GenericName=Ferramentas de PDF
+Comment=Mescle, divida, organize, converta e comprima PDFs sem enviar nada para a internet
+Exec=pdftoolbox %U
+Icon=io.github.leonardo_sponton.PDFToolbox
+Terminal=false
+Categories=Office;GTK;
+MimeType=application/pdf;image/jpeg;image/png;image/webp;image/gif;image/bmp;image/tiff;
+Keywords=pdf;mesclar;juntar;unir;dividir;separar;extrair;girar;comprimir;reduzir;converter;imagem;jpg;png;
+StartupNotify=true

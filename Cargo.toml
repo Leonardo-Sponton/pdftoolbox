@@ -1,0 +1,36 @@
+[package]
+name = "pdftoolbox"
+version = "0.2.0"
+edition = "2024"
+rust-version = "1.85"
+description = "Suíte local de documentos PDF para Linux (GTK4/libadwaita)"
+license = "GPL-3.0-or-later"
+authors = ["Leonardo"]
+repository = "https://github.com/Leonardo-Sponton/pdftoolbox"
+readme = "README.md"
+
+[dependencies]
+gtk = { package = "gtk4", version = "0.11", features = ["v4_12"] }
+adw = { package = "libadwaita", version = "0.9", features = ["v1_5"] }
+async-channel = "2"
+flate2 = "1"
+image = { version = "0.25", default-features = false, features = ["png", "jpeg", "bmp", "gif", "webp", "tiff"] }
+
+[profile.release]
+lto = "thin"
+codegen-units = 4
+
+[package.metadata.deb]
+maintainer = "Leonardo <230742162+Leonardo-Sponton@users.noreply.github.com>"
+section = "graphics"
+priority = "optional"
+extended-description = "Mescle, divida, organize, converta e comprima PDFs localmente, sem enviar arquivos para a internet."
+depends = "libgtk-4-1 (>= 4.12), libadwaita-1-0 (>= 1.5), qpdf, poppler-utils"
+recommends = "ghostscript"
+assets = [
+    ["target/release/pdftoolbox", "usr/bin/", "755"],
+    ["data/io.github.leonardo_sponton.PDFToolbox.desktop", "usr/share/applications/", "644"],
+    ["data/icons/io.github.leonardo_sponton.PDFToolbox.svg", "usr/share/icons/hicolor/scalable/apps/", "644"],
+    ["README.md", "usr/share/doc/pdftoolbox/", "644"],
+    ["LICENSES.md", "usr/share/doc/pdftoolbox/", "644"],
+]

@@ -1,0 +1,26 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="128" height="128" viewBox="0 0 128 128">
+  <defs>
+    <linearGradient id="fundo" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#4a6fd8"/>
+      <stop offset="1" stop-color="#3550b0"/>
+    </linearGradient>
+    <linearGradient id="folha" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#ffffff"/>
+      <stop offset="1" stop-color="#e8ecf6"/>
+    </linearGradient>
+  </defs>
+  <rect x="8" y="12" width="112" height="108" rx="22" fill="#25397f"/>
+  <rect x="8" y="8" width="112" height="108" rx="22" fill="url(#fundo)"/>
+  <!-- folha com canto dobrado -->
+  <path d="M36 22 h40 l18 18 v58 a6 6 0 0 1 -6 6 h-52 a6 6 0 0 1 -6 -6 v-70 a6 6 0 0 1 6 -6 z" fill="url(#folha)"/>
+  <path d="M76 22 v12 a6 6 0 0 0 6 6 h12 z" fill="#c4cde6"/>
+  <!-- linhas de texto -->
+  <rect x="42" y="50" width="34" height="5" rx="2.5" fill="#9aa8cf"/>
+  <rect x="42" y="61" width="42" height="5" rx="2.5" fill="#9aa8cf"/>
+  <rect x="42" y="72" width="26" height="5" rx="2.5" fill="#9aa8cf"/>
+  <!-- chave de boca: a caixa de ferramentas -->
+  <g transform="rotate(-40 88 88)">
+    <rect x="82" y="70" width="12" height="40" rx="6" fill="#f2a33a"/>
+    <path d="M76 70 a12 12 0 1 1 24 0 l-6 0 v-8 h-12 v8 z" fill="#f2a33a"/>
+  </g>
+</svg>

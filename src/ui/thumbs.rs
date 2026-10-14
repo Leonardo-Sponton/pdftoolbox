@@ -1,0 +1,227 @@
+//! Miniaturas compartilhadas (tela inicial, listas de arquivos e
+//! pré-visualizações). A renderização roda fora da thread da interface; o
+//! resultado fica num cache em memória, por arquivo e data de modificação,
+//! e nunca é gravado em disco fora da pasta temporária da tarefa.
+
+use std::cell::RefCell;
+use std::collections::HashMap;
+use std::path::{Path, PathBuf};
+use std::time::SystemTime;
+
+use gtk::prelude::Cast;
+use gtk::{gdk, glib};
+
+use pdftoolbox::engines::{poppler, qpdf};
+use pdftoolbox::error::display_name;
+use pdftoolbox::jobs::CancelToken;
+use pdftoolbox::operations::human_size;
+use pdftoolbox::storage::JobDir;
+use pdftoolbox::{OpError, pdfwriter};
+
+use super::page_thumb::PageThumb;
+use super::widgets;
+
+/// Lado maior das miniaturas renderizadas, em pixels.
+pub const SIZE: u32 = 180;
+/// Acima disso, o cache é esvaziado antes de crescer mais.
+const MAX_ENTRIES: usize = 1500;
+
+type Key = (PathBuf, Option<SystemTime>, u32);
+
+thread_local! {
+    static CACHE: RefCell<HashMap<Key, gdk::Texture>> = RefCell::new(HashMap::new());
+}
+
+fn key(path: &Path, page: u32) -> Key {
+    let mtime = std::fs::metadata(path).and_then(|m| m.modified()).ok();
+    (path.to_path_buf(), mtime, page)
+}
+
+pub fn cached(path: &Path, page: u32) -> Option<gdk::Texture> {
+    let k = key(path, page);
+    CACHE.with(|c| c.borrow().get(&k).cloned())
+}
+
+fn store(path: &Path, page: u32, texture: &gdk::Texture) {
+    let k = key(path, page);
+    CACHE.with(|c| {
+        let mut c = c.borrow_mut();
+        if c.len() >= MAX_ENTRIES {
+            c.clear();
+        }
+        c.insert(k, texture.clone());
+    });
+}
+
+/// Pixels RGBA prontos para virar textura (podem atravessar threads).
+struct Pixels {
+    width: u32,
+    height: u32,
+    data: Vec<u8>,
+}
+
+impl Pixels {
+    fn from_image(img: image::DynamicImage) -> Pixels {
+        let rgba = img.into_rgba8();
+        Pixels { width: rgba.width(), height: rgba.height(), data: rgba.into_raw() }
+    }
+
+    fn texture(self) -> gdk::Texture {
+        gdk::MemoryTexture::new(
+            self.width as i32,
+            self.height as i32,
+            gdk::MemoryFormat::R8g8b8a8,
+            &glib::Bytes::from_owned(self.data),
+            self.width as usize * 4,
+        )
+        .upcast()
+    }
+}
+
+/// Renderiza as páginas `first..=last` de um PDF numa única chamada do pdftoppm.
+fn render_pdf(path: &Path, first: u32, last: u32, cancel: &CancelToken) -> Vec<(u32, Pixels)> {
+    let Ok(dir) = JobDir::new() else { return Vec::new() };
+    let Ok(files) = poppler::thumbnails(path, first, last, SIZE, dir.path(), cancel) else { return Vec::new() };
+    (first..=last)
+        .zip(files)
+        .filter_map(|(page, file)| image::open(&file).ok().map(|img| (page, Pixels::from_image(img))))
+        .collect()
+}
+
+/// Lê uma imagem, aplica a orientação EXIF e reduz para o tamanho da miniatura.
+fn render_image(path: &Path) -> Option<Pixels> {
+    use image::ImageDecoder;
+    let mut decoder = image::ImageReader::open(path).ok()?.with_guessed_format().ok()?.into_decoder().ok()?;
+    let orientation = decoder.orientation().unwrap_or(image::metadata::Orientation::NoTransforms);
+    let mut img = image::DynamicImage::from_decoder(decoder).ok()?.thumbnail(SIZE, SIZE);
+    img.apply_orientation(orientation);
+    Some(Pixels::from_image(img))
+}
+
+/// Miniaturas das páginas `first..=last`, usando o cache quando possível.
+pub async fn pdf_pages(path: &Path, first: u32, last: u32, cancel: &CancelToken) -> Vec<(u32, gdk::Texture)> {
+    let mut have: Vec<(u32, gdk::Texture)> = Vec::new();
+    let mut missing = Vec::new();
+    for page in first..=last {
+        match cached(path, page) {
+            Some(t) => have.push((page, t)),
+            None => missing.push(page),
+        }
+    }
+    if let (Some(&a), Some(&b)) = (missing.first(), missing.last()) {
+        let (p, c) = (path.to_path_buf(), cancel.clone());
+        let rendered = widgets::blocking(move || render_pdf(&p, a, b, &c)).await;
+        for (page, pixels) in rendered {
+            let texture = pixels.texture();
+            store(path, page, &texture);
+            if missing.contains(&page) {
+                have.push((page, texture));
+            }
+        }
+    }
+    have.sort_by_key(|(p, _)| *p);
+    have
+}
+
+/// Primeira página de um PDF ou a própria imagem, já reduzida.
+pub async fn first_page(path: &Path) -> Option<gdk::Texture> {
+    if let Some(t) = cached(path, 1) {
+        return Some(t);
+    }
+    if pdftoolbox::catalog::extension_ok(pdftoolbox::catalog::Accepts::Pdf, path) {
+        return pdf_pages(path, 1, 1, &CancelToken::new()).await.into_iter().next().map(|(_, t)| t);
+    }
+    let p = path.to_path_buf();
+    let texture = widgets::blocking(move || render_image(&p)).await?.texture();
+    store(path, 1, &texture);
+    Some(texture)
+}
+
+/// Informações de um arquivo para exibir ao usuário.
+#[derive(Debug, Clone, Default)]
+pub struct FileFacts {
+    pub size: Option<u64>,
+    pub pages: Option<u32>,
+    /// Dimensões exibidas (imagens: pixels; PDFs: pontos da 1ª página).
+    pub dims: Option<(f32, f32)>,
+    /// Problema que impede o uso do arquivo, já em linguagem do usuário.
+    pub problem: Option<String>,
+}
+
+impl FileFacts {
+    /// Linha curta: “308 páginas · 6,5 MB” ou “1920 × 1080 px · 2 MB”.
+    pub fn line(&self, is_pdf: bool) -> String {
+        let size = self.size.map(human_size);
+        if let Some(problem) = &self.problem {
+            return match size {
+                Some(s) => format!("⚠ {problem} · {s}"),
+                None => format!("⚠ {problem}"),
+            };
+        }
+        let mut parts = Vec::new();
+        if is_pdf {
+            if let Some(n) = self.pages {
+                parts.push(format!("{n} página{}", if n == 1 { "" } else { "s" }));
+            }
+        } else if let Some((w, h)) = self.dims {
+            parts.push(format!("{} × {} px", w as u32, h as u32));
+        }
+        parts.extend(size);
+        parts.join(" · ")
+    }
+}
+
+/// Lê tamanho, páginas e dimensões (em segundo plano).
+pub fn facts_blocking(path: &Path) -> FileFacts {
+    let mut facts = FileFacts::default();
+    match std::fs::metadata(path) {
+        Ok(m) => facts.size = Some(m.len()),
+        Err(_) => {
+            facts.problem = Some("Arquivo não encontrado ou sem permissão de leitura".into());
+            return facts;
+        }
+    }
+    let cancel = CancelToken::new();
+    if pdftoolbox::catalog::extension_ok(pdftoolbox::catalog::Accepts::Pdf, path) {
+        match qpdf::page_count(path, &cancel) {
+            Ok(n) => facts.pages = Some(n),
+            Err(OpError::PasswordProtected(_)) => facts.problem = Some("Protegido por senha".into()),
+            Err(OpError::MissingTool(_)) => {}
+            Err(_) => facts.problem = Some("Não parece ser um PDF válido".into()),
+        }
+        if facts.problem.is_none() {
+            facts.dims = poppler::page_size(path, 1, &cancel).ok();
+        }
+    } else {
+        match pdfwriter::display_dimensions(path) {
+            Ok((w, h)) => facts.dims = Some((w as f32, h as f32)),
+            Err(_) => facts.problem = Some("Imagem ilegível ou formato não suportado".into()),
+        }
+    }
+    facts
+}
+
+pub async fn facts(path: &Path) -> FileFacts {
+    let p = path.to_path_buf();
+    widgets::blocking(move || facts_blocking(&p)).await
+}
+
+/// Miniatura da primeira página (ou da imagem) que carrega sozinha.
+pub fn picture(path: &Path, max_w: i32, max_h: i32) -> PageThumb {
+    use gtk::prelude::*;
+    let thumb = PageThumb::new(max_w, max_h);
+    thumb.update_property(&[gtk::accessible::Property::Label(&format!("Miniatura de {}", display_name(path)))]);
+    if let Some(t) = cached(path, 1) {
+        thumb.set_texture(Some(&t));
+        return thumb;
+    }
+    let weak = thumb.downgrade();
+    let path = path.to_path_buf();
+    glib::spawn_future_local(async move {
+        let texture = first_page(&path).await;
+        if let (Some(thumb), Some(texture)) = (weak.upgrade(), texture) {
+            thumb.set_texture(Some(&texture));
+        }
+    });
+    thumb
+}
