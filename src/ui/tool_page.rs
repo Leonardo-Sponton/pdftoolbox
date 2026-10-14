@@ -15,9 +15,9 @@ use pdftoolbox::engines::poppler;
 use pdftoolbox::error::display_name;
 use pdftoolbox::jobs::{self, CancelToken, JobEvent};
 use pdftoolbox::operations::{
-    self, CompressLevel, Destination, DocFields, ImageFormat, ImageLayout, MetadataChange, NumberFormat, NumberStyle,
-    OcrLanguage, OcrOptions, Outcome, PageSize, Position, Request, Restrictions, Secret, SplitMode, WatermarkStyle,
-    human_size, unsupported_chars,
+    self, CUSTOM_DPI, CompressLevel, Destination, DocFields, Estimate, ImageFormat, ImageLayout, MetadataChange,
+    NumberFormat, NumberStyle, OcrLanguage, OcrOptions, Outcome, PageSize, Position, Request, Restrictions, Secret,
+    SplitMode, WatermarkStyle, human_size, unsupported_chars,
 };
 use pdftoolbox::preview::Plan;
 use pdftoolbox::{OpError, OpResult, pages, stamp};
@@ -56,9 +56,7 @@ enum Options {
         dpi: adw::SpinRow,
         quality: adw::SpinRow,
     },
-    Compress {
-        level: adw::ComboRow,
-    },
+    Compress(Box<CompressRows>),
     Numbers {
         position: adw::ComboRow,
         format: adw::ComboRow,
@@ -108,6 +106,35 @@ struct MetadataRows {
     facts: [adw::ActionRow; 4],
     /// Arquivo cujos metadados preencheram os campos.
     loaded: RefCell<Option<PathBuf>>,
+}
+
+struct CompressRows {
+    level: adw::ComboRow,
+    dpi: adw::SpinRow,
+    /// Tamanho previsto, calculado em segundo plano com uma amostra de páginas.
+    estimate: adw::ActionRow,
+    spinner: gtk::Spinner,
+    estimates: RefCell<HashMap<(PathBuf, CompressLevel), Result<Estimate, String>>>,
+    pending: RefCell<Option<CancelToken>>,
+    generation: Cell<u64>,
+}
+
+impl CompressRows {
+    fn level(&self) -> CompressLevel {
+        level_from(self.level.selected(), self.dpi.value())
+    }
+
+    fn stop(&self) {
+        if let Some(t) = self.pending.borrow_mut().take() {
+            t.cancel();
+        }
+    }
+}
+
+impl Drop for CompressRows {
+    fn drop(&mut self) {
+        self.stop();
+    }
 }
 
 struct ProtectRows {
@@ -288,6 +315,10 @@ fn compress_explanation(level: CompressLevel) -> String {
         CompressLevel::Strong => {
             "Reduz as imagens para 96 ppp. Gera o menor arquivo, com perda visível ao ampliar ou imprimir."
         }
+        CompressLevel::Custom(_) => {
+            "Reduz as imagens para a resolução escolhida abaixo e as recomprime em JPEG. Imagens que já \
+             estão abaixo dela não são ampliadas. O texto continua pesquisável."
+        }
     };
     let mut text = base.to_string();
     if level != CompressLevel::Lossless {
@@ -301,12 +332,53 @@ fn compress_explanation(level: CompressLevel) -> String {
     text
 }
 
-fn level_from(i: u32) -> CompressLevel {
+fn level_from(i: u32, dpi: f64) -> CompressLevel {
     match i {
         0 => CompressLevel::Lossless,
         2 => CompressLevel::Strong,
+        3 => CompressLevel::Custom(dpi as u32),
         _ => CompressLevel::Recommended,
     }
+}
+
+/// Texto da linha “Tamanho estimado” para os arquivos da lista.
+fn estimate_text(results: &[(&Path, &Result<Estimate, String>)]) -> String {
+    let ok: Vec<&Estimate> = results.iter().filter_map(|(_, r)| r.as_ref().ok()).collect();
+    if let [(path, Err(e))] = results {
+        return format!("Não foi possível estimar “{}” ({e}).", display_name(path));
+    }
+    if ok.is_empty() {
+        return "Não foi possível estimar o resultado.".into();
+    }
+    let original: u64 = ok.iter().map(|e| e.original).sum();
+    let estimated: u64 = ok.iter().map(|e| e.estimated).sum();
+    let exact = ok.iter().all(|e| e.exact);
+    let total = Estimate { original, estimated, exact };
+    let approx = if exact { "" } else { "≈ " };
+    let mut text = if results.len() == 1 {
+        format!("{} → {approx}{}", human_size(original), human_size(estimated))
+    } else {
+        format!("{} arquivos: {} → {approx}{}", ok.len(), human_size(original), human_size(estimated))
+    };
+    if total.worthwhile() {
+        text.push_str(&format!(" (−{:.0}%)", total.saving() * 100.0));
+    } else if results.len() == 1 {
+        text.push_str(". Quase nenhuma economia: nenhum arquivo novo seria criado.");
+    } else {
+        text.push_str(". Quase nenhuma economia: os arquivos que não diminuírem não serão gravados.");
+    }
+    if results.len() == 1 && total.worthwhile() {
+        text.push_str(if exact {
+            ". Calculado com o documento inteiro."
+        } else {
+            ". Estimado com uma amostra das páginas."
+        });
+    }
+    let failed = results.len() - ok.len();
+    if failed > 0 {
+        text.push_str(&format!(" Sem estimativa para {failed} arquivo(s)."));
+    }
+    text
 }
 
 /// Constrói as linhas de opções da ferramenta dentro de `group`.
@@ -389,14 +461,38 @@ fn build_options(info: &ToolInfo, group: &adw::PreferencesGroup) -> Options {
             Options::ToImages { format, dpi, quality }
         }
         ToolId::Compress => {
-            let level = combo("Nível", &["Sem perda", "Recomendada", "Máxima"], 1);
+            let level = combo("Nível", &["Sem perda", "Recomendada", "Máxima", "Personalizada"], 1);
+            let dpi = spin(
+                "Resolução das imagens",
+                "Em ppp: 72 a 100 para tela, 150 para e-mail, 300 para impressão",
+                *CUSTOM_DPI.start() as f64,
+                *CUSTOM_DPI.end() as f64,
+                10.0,
+                120.0,
+            );
+            dpi.set_visible(false);
+            let estimate = widgets::plain_row("Tamanho estimado", "Adicione um arquivo para ver a estimativa.");
+            let spinner = gtk::Spinner::builder().valign(gtk::Align::Center).visible(false).build();
+            estimate.add_suffix(&spinner);
+            estimate.set_subtitle_selectable(true);
             group.set_description(Some(&compress_explanation(CompressLevel::Recommended)));
-            let g = group.clone();
+            let (g, d) = (group.clone(), dpi.clone());
             level.connect_selected_notify(move |l| {
-                g.set_description(Some(&compress_explanation(level_from(l.selected()))))
+                d.set_visible(l.selected() == 3);
+                g.set_description(Some(&compress_explanation(level_from(l.selected(), d.value()))))
             });
             group.add(&level);
-            Options::Compress { level }
+            group.add(&dpi);
+            group.add(&estimate);
+            Options::Compress(Box::new(CompressRows {
+                level,
+                dpi,
+                estimate,
+                spinner,
+                estimates: RefCell::new(HashMap::new()),
+                pending: RefCell::new(None),
+                generation: Cell::new(0),
+            }))
         }
         ToolId::Organize | ToolId::Annotate => Options::None,
         ToolId::NumberPages => {
@@ -917,7 +1013,22 @@ pub fn build(app: &Rc<AppState>, info: &'static ToolInfo, files: Vec<PathBuf>) -
             let r = refresh.clone();
             skip.connect_active_notify(move |_| r());
         }
-        Options::Compress { .. } | Options::None | Options::Office => {}
+        Options::Compress(c) => {
+            let p = Rc::downgrade(&page);
+            c.level.connect_selected_notify(move |_| {
+                if let Some(p) = p.upgrade() {
+                    p.refresh_estimate();
+                }
+            });
+            // Enquanto o valor muda (setas, digitação), espera parar antes de calcular.
+            let p = Rc::downgrade(&page);
+            c.dpi.connect_value_notify(move |_| {
+                if let Some(p) = p.upgrade() {
+                    p.refresh_estimate_later();
+                }
+            });
+        }
+        Options::None | Options::Office => {}
     }
     if let Some(preview) = &page.preview {
         let r = refresh.clone();
@@ -1151,6 +1262,9 @@ impl ToolPage {
         }
         if let Options::Metadata(m) = &self.options {
             self.load_metadata(m, files.first().cloned());
+        }
+        if let Options::Compress(_) = &self.options {
+            self.refresh_estimate();
         }
         if let Options::Ocr { .. } = &self.options {
             for path in &files {
@@ -1621,7 +1735,7 @@ impl ToolPage {
             Options::Images { one_file, .. } => one_file.is_active() || n <= 1,
             Options::Split { .. } | Options::ToImages { .. } => false,
             Options::Rotate { .. }
-            | Options::Compress { .. }
+            | Options::Compress(_)
             | Options::Numbers { .. }
             | Options::Watermark { .. }
             | Options::Protect(_)
@@ -1689,7 +1803,7 @@ impl ToolPage {
                 dpi: dpi.value() as u32,
                 quality: quality.value() as u8,
             },
-            Options::Compress { level } => Request::Compress { inputs: files, level: level_from(level.selected()) },
+            Options::Compress(c) => Request::Compress { inputs: files, level: c.level() },
             Options::Numbers { position, format, first, size, spec } => Request::NumberPages {
                 inputs: files,
                 spec: spec_text(spec),
@@ -1746,6 +1860,86 @@ impl ToolPage {
                 },
             },
         })
+    }
+
+    /// Recalcula a estimativa depois de uma pausa (resolução sendo digitada).
+    fn refresh_estimate_later(self: &Rc<Self>) {
+        let Options::Compress(c) = &self.options else { return };
+        c.stop();
+        let generation = c.generation.get() + 1;
+        c.generation.set(generation);
+        // O valor anterior não vale mais para a nova resolução.
+        if !self.files.borrow().is_empty() {
+            c.spinner.set_visible(true);
+            c.spinner.set_spinning(true);
+            c.estimate.set_subtitle("Calculando…");
+        }
+        let p = Rc::downgrade(self);
+        glib::timeout_add_local_once(std::time::Duration::from_millis(500), move || {
+            if let Some(p) = p.upgrade()
+                && let Options::Compress(c) = &p.options
+                && c.generation.get() == generation
+            {
+                p.refresh_estimate();
+            }
+        });
+    }
+
+    /// Mostra a estimativa do nível escolhido, calculando o que faltar em
+    /// segundo plano (um arquivo de cada vez; mudar o nível cancela o cálculo).
+    fn refresh_estimate(self: &Rc<Self>) {
+        let Options::Compress(c) = &self.options else { return };
+        c.stop();
+        let generation = c.generation.get() + 1;
+        c.generation.set(generation);
+        let files = self.files.borrow().clone();
+        let level = c.level();
+        let missing_tool = level.needs().iter().any(|t| t.find().is_none());
+        c.estimate.set_visible(!missing_tool);
+        c.spinner.set_visible(false);
+        c.spinner.set_spinning(false);
+        if files.is_empty() || missing_tool {
+            c.estimate.set_subtitle("Adicione um arquivo para ver a estimativa.");
+            return;
+        }
+        let todo: Vec<PathBuf> =
+            files.iter().filter(|f| !c.estimates.borrow().contains_key(&((*f).clone(), level))).cloned().collect();
+        if todo.is_empty() {
+            let known = c.estimates.borrow();
+            let results: Vec<(&Path, &Result<Estimate, String>)> =
+                files.iter().map(|f| (f.as_path(), &known[&(f.clone(), level)])).collect();
+            c.estimate.set_subtitle(&estimate_text(&results));
+            return;
+        }
+        c.spinner.set_visible(true);
+        c.spinner.set_spinning(true);
+        c.estimate.set_subtitle(if files.len() == 1 {
+            "Calculando… (comprimindo algumas páginas numa pasta temporária)"
+        } else {
+            "Calculando… (comprimindo algumas páginas de cada arquivo numa pasta temporária)"
+        });
+        let cancel = CancelToken::new();
+        *c.pending.borrow_mut() = Some(cancel.clone());
+        let p = Rc::downgrade(self);
+        glib::spawn_future_local(async move {
+            for file in todo {
+                let (f, token) = (file.clone(), cancel.clone());
+                let result = widgets::blocking(move || operations::estimate_compression(&f, level, &token)).await;
+                if cancel.is_cancelled() {
+                    return;
+                }
+                let Some(page) = p.upgrade() else { return };
+                let Options::Compress(c) = &page.options else { return };
+                if c.generation.get() != generation {
+                    return;
+                }
+                let result = result.map_err(|e| e.title().to_string());
+                c.estimates.borrow_mut().insert((file, level), result);
+            }
+            if let Some(page) = p.upgrade() {
+                page.refresh_estimate();
+            }
+        });
     }
 
     fn set_running(&self, running: bool) {

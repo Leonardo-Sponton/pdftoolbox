@@ -1,5 +1,5 @@
 //! Organizar páginas: miniaturas, seleção múltipla, arrastar para reordenar,
-//! girar, duplicar, excluir e desfazer. O resultado é gravado pela operação
+//! girar, duplicar, excluir, inserir páginas em branco, ampliar e desfazer. O resultado é gravado pela operação
 //! estrutural `Request::Organize` (sem rasterizar).
 
 use std::cell::{Cell, RefCell};
@@ -18,7 +18,8 @@ use pdftoolbox::operations::{self, Destination, PageItem, Request};
 use pdftoolbox::storage::JobDir;
 use pdftoolbox::{OpError, OpResult};
 
-use super::{AppState, primary_menu, widgets};
+use super::page_zoom::{self, ZoomItem};
+use super::{AppState, primary_menu, thumbs, widgets};
 
 const THUMB: i32 = 160;
 
@@ -39,7 +40,12 @@ struct Organizer {
     input: RefCell<Option<PathBuf>>,
     total: Cell<u32>,
     items: RefCell<Vec<PageItem>>,
+    /// Ordem gravada por último (ou a do arquivo aberto): diferente de
+    /// `items` = alterações não salvas.
+    saved: RefCell<Vec<PageItem>>,
     undo: RefCell<Vec<Vec<PageItem>>>,
+    /// Folhas brancas já criadas, por tamanho em pixels.
+    blanks: RefCell<HashMap<(u32, u32), gdk::Texture>>,
     textures: RefCell<HashMap<u32, gdk::Texture>>,
     cells: RefCell<Vec<PageCell>>,
     thumbs_dir: RefCell<Option<JobDir>>,
@@ -58,6 +64,12 @@ struct Organizer {
 pub fn build(app: &Rc<AppState>, files: Vec<PathBuf>) -> adw::NavigationPage {
     let info = catalog::info(ToolId::Organize);
     let header = adw::HeaderBar::new();
+    // Com alterações não salvas, a página não sai sozinha (can-pop falso):
+    // este botão substitui o “voltar” e pede confirmação.
+    let back = widgets::icon_button("go-previous-symbolic", "Voltar");
+    back.set_action_name(Some("page.leave"));
+    back.set_visible(false);
+    header.pack_start(&back);
     let open = gtk::Button::builder().label("Abrir outro…").tooltip_text("Escolher outro PDF (Ctrl+O)").build();
     header.pack_start(&open);
     header.pack_end(&primary_menu());
@@ -96,7 +108,7 @@ pub fn build(app: &Rc<AppState>, files: Vec<PathBuf>) -> adw::NavigationPage {
     let empty = adw::StatusPage::builder()
         .icon_name("view-grid-symbolic")
         .title("Escolha um PDF para organizar")
-        .description("Ou arraste o arquivo para esta janela. Você poderá reordenar, girar, duplicar e excluir páginas antes de salvar.")
+        .description("Ou arraste o arquivo para esta janela. Você poderá reordenar, girar, duplicar, excluir e inserir páginas em branco antes de salvar.")
         .child(&choose)
         .build();
     let loading = adw::StatusPage::builder()
@@ -118,16 +130,23 @@ pub fn build(app: &Rc<AppState>, files: Vec<PathBuf>) -> adw::NavigationPage {
     let rot_right = widgets::icon_button("object-rotate-right-symbolic", "Girar seleção à direita (Ctrl+R)");
     let duplicate = widgets::icon_button("edit-copy-symbolic", "Duplicar seleção (Ctrl+D)");
     let delete = widgets::icon_button("user-trash-symbolic", "Excluir seleção (Delete)");
+    let blank = widgets::icon_button(
+        "document-new-symbolic",
+        "Inserir página em branco depois da seleção, do tamanho da página anterior (Ctrl+B)",
+    );
+    let zoom = widgets::icon_button("zoom-in-symbolic", "Ampliar a página (espaço ou clique duplo)");
     let move_left = widgets::icon_button("go-previous-symbolic", "Mover seleção para trás (Ctrl+←)");
     let move_right = widgets::icon_button("go-next-symbolic", "Mover seleção para frente (Ctrl+→)");
     let undo_button = widgets::icon_button("edit-undo-symbolic", "Desfazer (Ctrl+Z)");
     let select_all = widgets::icon_button("edit-select-all-symbolic", "Selecionar todas (Ctrl+A)");
-    for b in [&rot_left, &rot_right, &duplicate, &delete] {
+    for b in [&rot_left, &rot_right, &duplicate, &delete, &blank] {
         action_bar.pack_start(b);
     }
     action_bar.pack_start(&gtk::Separator::new(gtk::Orientation::Vertical));
     action_bar.pack_start(&move_left);
     action_bar.pack_start(&move_right);
+    action_bar.pack_start(&gtk::Separator::new(gtk::Orientation::Vertical));
+    action_bar.pack_start(&zoom);
     let count = gtk::Label::new(None);
     count.add_css_class("dim-label");
     count.set_ellipsize(gtk::pango::EllipsizeMode::End);
@@ -141,6 +160,7 @@ pub fn build(app: &Rc<AppState>, files: Vec<PathBuf>) -> adw::NavigationPage {
     toolbar.set_content(Some(&stack));
     toolbar.add_bottom_bar(&action_bar);
     let nav_page = adw::NavigationPage::with_tag(&toolbar, info.title, info.key);
+    nav_page.bind_property("can-pop", &back, "visible").invert_boolean().sync_create().build();
 
     let org = Rc::new(Organizer {
         app: Rc::downgrade(app),
@@ -148,7 +168,9 @@ pub fn build(app: &Rc<AppState>, files: Vec<PathBuf>) -> adw::NavigationPage {
         input: RefCell::new(None),
         total: Cell::new(0),
         items: RefCell::new(Vec::new()),
+        saved: RefCell::new(Vec::new()),
         undo: RefCell::new(Vec::new()),
+        blanks: RefCell::new(HashMap::new()),
         textures: RefCell::new(HashMap::new()),
         cells: RefCell::new(Vec::new()),
         thumbs_dir: RefCell::new(None),
@@ -176,7 +198,10 @@ pub fn build(app: &Rc<AppState>, files: Vec<PathBuf>) -> adw::NavigationPage {
         });
         group.add_action(&action);
     };
-    add("add", |o| o.pick());
+    add("add", |o| o.confirm_discard(|o| o.pick()));
+    add("leave", |o| o.leave());
+    add("insert-blank", |o| o.insert_blank());
+    add("zoom", |o| o.zoom(None));
     add("run", |o| o.save_to(None));
     add("save-as", |o| o.save_as());
     add("rotate-right", |o| o.rotate(90));
@@ -198,6 +223,8 @@ pub fn build(app: &Rc<AppState>, files: Vec<PathBuf>) -> adw::NavigationPage {
         ("Delete", "page.delete"),
         ("<Control>z", "page.undo"),
         ("<Control>a", "page.select-all"),
+        ("<Control>b", "page.insert-blank"),
+        ("Insert", "page.insert-blank"),
     ] {
         shortcuts.add_shortcut(gtk::Shortcut::new(
             gtk::ShortcutTrigger::parse_string(accel),
@@ -205,11 +232,25 @@ pub fn build(app: &Rc<AppState>, files: Vec<PathBuf>) -> adw::NavigationPage {
         ));
     }
     nav_page.add_controller(shortcuts);
+    // Esc e Alt+← antes do AdwNavigationView, que os consome mesmo quando a
+    // página não pode sair sozinha.
+    let back_keys = gtk::ShortcutController::new();
+    back_keys.set_propagation_phase(gtk::PropagationPhase::Capture);
+    for accel in ["Escape", "<Alt>Left"] {
+        back_keys.add_shortcut(gtk::Shortcut::new(
+            gtk::ShortcutTrigger::parse_string(accel),
+            Some(gtk::NamedAction::new("page.leave")),
+        ));
+    }
+    nav_page.add_controller(back_keys);
     // Ctrl+setas precisam ser capturadas antes das teclas internas do FlowBox,
     // que as usam para mover o cursor sem alterar a seleção.
     let moves = gtk::ShortcutController::new();
     moves.set_propagation_phase(gtk::PropagationPhase::Capture);
-    for (accel, action) in [("<Control>Left", "page.move-left"), ("<Control>Right", "page.move-right")] {
+    // Espaço amplia a página (o FlowBox o usaria para selecionar; Enter continua).
+    for (accel, action) in
+        [("<Control>Left", "page.move-left"), ("<Control>Right", "page.move-right"), ("space", "page.zoom")]
+    {
         moves.add_shortcut(gtk::Shortcut::new(
             gtk::ShortcutTrigger::parse_string(accel),
             Some(gtk::NamedAction::new(action)),
@@ -222,6 +263,8 @@ pub fn build(app: &Rc<AppState>, files: Vec<PathBuf>) -> adw::NavigationPage {
         (&rot_right, "page.rotate-right"),
         (&duplicate, "page.duplicate"),
         (&delete, "page.delete"),
+        (&blank, "page.insert-blank"),
+        (&zoom, "page.zoom"),
         (&move_left, "page.move-left"),
         (&move_right, "page.move-right"),
         (&undo_button, "page.undo"),
@@ -233,6 +276,13 @@ pub fn build(app: &Rc<AppState>, files: Vec<PathBuf>) -> adw::NavigationPage {
     for b in [&open, &choose, &error_choose] {
         b.set_action_name(Some("page.add"));
     }
+    // Clique duplo (ou Enter) numa página: ampliar.
+    let o = Rc::downgrade(&org);
+    flow.connect_child_activated(move |_, child| {
+        if let Some(o) = o.upgrade() {
+            o.zoom(Some(child.index() as usize));
+        }
+    });
     let o = Rc::downgrade(&org);
     flow.connect_selected_children_changed(move |_| {
         if let Some(o) = o.upgrade() {
@@ -244,7 +294,7 @@ pub fn build(app: &Rc<AppState>, files: Vec<PathBuf>) -> adw::NavigationPage {
         if let Some(o) = o.upgrade()
             && let Some(f) = files.into_iter().find(|f| catalog::extension_ok(Accepts::Pdf, f))
         {
-            o.load(f);
+            o.confirm_discard(move |o| o.load(f.clone()));
         }
     });
     // Ao sair da página, interrompe as miniaturas e apaga os temporários.
@@ -327,6 +377,7 @@ impl Organizer {
         *self.dest_dir.borrow_mut() = path.parent().map(Path::to_path_buf);
         self.total.set(total);
         *self.items.borrow_mut() = (1..=total).map(|page| PageItem { page, rotation: 0 }).collect();
+        *self.saved.borrow_mut() = self.items.borrow().clone();
         self.undo.borrow_mut().clear();
         self.textures.borrow_mut().clear();
         let thumbs = dir.path().to_path_buf();
@@ -372,8 +423,30 @@ impl Organizer {
         });
     }
 
-    fn set_picture(&self, picture: &gtk::Picture, item: &PageItem) {
-        picture.set_paintable(self.textures.borrow().get(&item.page));
+    /// Imagem da posição `pos`: a miniatura da página ou, para uma página em
+    /// branco, uma folha branca no formato da vizinha que lhe dá o tamanho
+    /// (a mesma regra de `operations::blank_sizes`).
+    fn texture_at(&self, items: &[PageItem], pos: usize) -> Option<gdk::Texture> {
+        let item = items[pos];
+        if !item.is_blank() {
+            return self.textures.borrow().get(&item.page).cloned();
+        }
+        let neighbour =
+            items[..pos].iter().rev().find(|it| !it.is_blank()).or(items[pos + 1..].iter().find(|it| !it.is_blank()));
+        let (mut w, mut h) = (113, THUMB as u32);
+        if let Some(n) = neighbour
+            && let Some(t) = self.textures.borrow().get(&n.page)
+        {
+            (w, h) = (t.width() as u32, t.height() as u32);
+            if n.rotation.rem_euclid(180) == 90 {
+                (w, h) = (h, w);
+            }
+        }
+        Some(self.blanks.borrow_mut().entry((w, h)).or_insert_with(|| thumbs::blank_texture(w, h)).clone())
+    }
+
+    fn set_picture(&self, picture: &gtk::Picture, texture: Option<&gdk::Texture>, item: &PageItem) {
+        picture.set_paintable(texture);
         for c in ["rot90", "rot180", "rot270"] {
             picture.remove_css_class(c);
         }
@@ -387,8 +460,8 @@ impl Organizer {
 
     fn refresh_pictures(&self) {
         let items = self.items.borrow();
-        for (cell, item) in self.cells.borrow().iter().zip(items.iter()) {
-            self.set_picture(&cell.picture, item);
+        for (pos, (cell, item)) in self.cells.borrow().iter().zip(items.iter()).enumerate() {
+            self.set_picture(&cell.picture, self.texture_at(&items, pos).as_ref(), item);
         }
         self.update_count();
     }
@@ -444,17 +517,24 @@ impl Organizer {
         PageCell { child, picture, label, rotation }
     }
 
-    fn update_cell(&self, cell: &PageCell, pos: usize, item: &PageItem) {
-        self.set_picture(&cell.picture, item);
+    fn update_cell(&self, cell: &PageCell, items: &[PageItem], pos: usize) {
+        let item = &items[pos];
+        self.set_picture(&cell.picture, self.texture_at(items, pos).as_ref(), item);
         let mut text = format!("{}", pos + 1);
-        if item.page as usize != pos + 1 {
+        if item.is_blank() {
+            text.push_str(" · em branco");
+        } else if item.page as usize != pos + 1 {
             text.push_str(&format!(" · pág. {}", item.page));
         }
         cell.label.set_text(&text);
         let angle = item.rotation.rem_euclid(360);
         cell.rotation.set_visible(angle != 0);
         cell.rotation.set_text(&format!("↻ {angle}°"));
-        let mut desc = format!("Posição {}, página original {}", pos + 1, item.page);
+        let mut desc = if item.is_blank() {
+            format!("Posição {}, página em branco", pos + 1)
+        } else {
+            format!("Posição {}, página original {}", pos + 1, item.page)
+        };
         if angle != 0 {
             desc.push_str(&format!(", girada {angle} graus"));
         }
@@ -477,8 +557,8 @@ impl Organizer {
             self.flow.remove(&cell.child);
         }
         self.flow.unselect_all();
-        for (pos, (cell, item)) in self.cells.borrow().iter().zip(items.iter()).enumerate() {
-            self.update_cell(cell, pos, item);
+        for (pos, cell) in self.cells.borrow().iter().enumerate() {
+            self.update_cell(cell, &items, pos);
             if select.contains(&pos) {
                 self.flow.select_child(&cell.child);
             }
@@ -497,6 +577,101 @@ impl Organizer {
         }
         self.undo_button.set_sensitive(!self.undo.borrow().is_empty());
         self.update_count();
+        self.update_dirty();
+    }
+
+    fn dirty(&self) -> bool {
+        *self.items.borrow() != *self.saved.borrow()
+    }
+
+    fn update_dirty(&self) {
+        if let Some(page) = self.nav_page.upgrade() {
+            page.set_can_pop(!self.dirty());
+        }
+    }
+
+    /// Volta à tela anterior, confirmando se há alterações não salvas.
+    fn leave(self: &Rc<Self>) {
+        self.confirm_discard(|o| {
+            let saved = o.saved.borrow().clone();
+            *o.items.borrow_mut() = saved;
+            o.update_dirty();
+            if let Some(app) = o.app.upgrade() {
+                app.nav.pop();
+            }
+        });
+    }
+
+    /// Executa `then` direto, ou depois de o usuário aceitar descartar as
+    /// alterações não salvas.
+    fn confirm_discard(self: &Rc<Self>, then: impl Fn(&Rc<Self>) + 'static) {
+        let Some(app) = self.app.upgrade() else { return };
+        if !self.dirty() || self.saving.get() {
+            then(self);
+            return;
+        }
+        let dialog = adw::AlertDialog::new(
+            Some("Descartar as alterações?"),
+            Some("A nova ordem das páginas ainda não foi salva. O PDF original não foi alterado."),
+        );
+        dialog.add_response("cancel", "Continuar organizando");
+        dialog.add_response("discard", "Descartar");
+        dialog.set_response_appearance("discard", adw::ResponseAppearance::Destructive);
+        dialog.set_default_response(Some("cancel"));
+        dialog.set_close_response("cancel");
+        let o = Rc::downgrade(self);
+        dialog.connect_response(None, move |_, response| {
+            if response == "discard"
+                && let Some(o) = o.upgrade()
+            {
+                then(&o);
+            }
+        });
+        dialog.present(Some(&app.window));
+    }
+
+    /// Insere uma página em branco depois da última página selecionada (ou
+    /// no fim). O tamanho vem da página anterior quando o arquivo é salvo.
+    fn insert_blank(self: &Rc<Self>) {
+        if self.input.borrow().is_none() {
+            return;
+        }
+        let at = self.selected().last().map(|&i| i + 1).unwrap_or(self.items.borrow().len());
+        self.remember();
+        self.items.borrow_mut().insert(at, PageItem::blank());
+        self.rebuild(&[at]);
+        self.toast("Página em branco inserida. Ctrl+Z desfaz.");
+    }
+
+    /// Amplia a página `pos` (ou a que tem o foco, ou a primeira selecionada).
+    fn zoom(self: &Rc<Self>, pos: Option<usize>) {
+        let Some(path) = self.input.borrow().clone() else { return };
+        let focused = self.flow.focus_child().and_downcast::<gtk::FlowBoxChild>().map(|c| c.index() as usize);
+        let Some(start) = pos.or(focused).or_else(|| self.selected().first().copied()) else {
+            self.toast("Escolha uma página para ampliar (clique duplo nela).");
+            return;
+        };
+        let items = self.items.borrow().clone();
+        let n = items.len();
+        let zoom_items = items
+            .iter()
+            .enumerate()
+            .map(|(i, it)| ZoomItem {
+                page: it.page,
+                rotation: it.rotation,
+                label: if it.is_blank() {
+                    format!("{} de {n} · em branco", i + 1)
+                } else if it.page as usize == i + 1 {
+                    format!("Página {} de {n}", i + 1)
+                } else {
+                    format!("{} de {n} · página original {}", i + 1, it.page)
+                },
+                texture: if it.is_blank() { self.texture_at(&items, i) } else { None },
+            })
+            .collect();
+        if let Some(win) = self.window() {
+            page_zoom::show(&win, path, zoom_items, start.min(n.saturating_sub(1)));
+        }
     }
 
     fn selected(&self) -> Vec<usize> {
@@ -566,8 +741,9 @@ impl Organizer {
 
     fn delete(self: &Rc<Self>) {
         let Some(sel) = self.need_selection() else { return };
-        if sel.len() == self.items.borrow().len() {
-            self.toast("O documento precisa ter pelo menos uma página.");
+        let originals_left = self.items.borrow().iter().enumerate().any(|(i, it)| !it.is_blank() && !sel.contains(&i));
+        if !originals_left {
+            self.toast("O documento precisa manter pelo menos uma página original.");
             return;
         }
         self.remember();
@@ -654,7 +830,7 @@ impl Organizer {
         let Some(dir) = dir.or_else(|| self.dest_dir.borrow().clone()) else { return };
         let pages = self.items.borrow().clone();
         let dest = Destination { dir, name: None };
-        let request = Request::Organize { input: input.clone(), pages };
+        let request = Request::Organize { input: input.clone(), pages: pages.clone() };
         let handle = jobs::spawn(move |ctx| operations::execute(request, &dest, ctx));
         let task = app.tasks.add(&format!("Organizar — {}", display_name(&input)), handle.cancel.clone());
         self.saving.set(true);
@@ -670,7 +846,7 @@ impl Organizer {
                         o.saving.set(false);
                         o.save.set_sensitive(true);
                         o.save.set_label("Salvar");
-                        o.finished(result, &task);
+                        o.finished(result, &task, pages);
                         break;
                     }
                 }
@@ -678,10 +854,13 @@ impl Organizer {
         });
     }
 
-    fn finished(&self, result: OpResult<operations::Outcome>, task: &super::tasks::TaskRow) {
+    /// `pages`: a ordem que foi gravada (pode ter mudado durante a gravação).
+    fn finished(&self, result: OpResult<operations::Outcome>, task: &super::tasks::TaskRow, pages: Vec<PageItem>) {
         let Some(app) = self.app.upgrade() else { return };
         match result {
             Ok(outcome) if !outcome.outputs.is_empty() => {
+                *self.saved.borrow_mut() = pages;
+                self.update_dirty();
                 let path = outcome.outputs[0].path.clone();
                 task.finish(&format!("Concluído: {}", display_name(&path)), Some(path.clone()));
                 let toast = adw::Toast::builder()

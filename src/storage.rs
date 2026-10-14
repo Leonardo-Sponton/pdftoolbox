@@ -106,6 +106,19 @@ pub fn cleanup_stale_jobs() {
     }
 }
 
+/// Remove os diretórios de tarefas deste processo. Chamado ao sair, depois
+/// de encerrar os motores: tarefas interrompidas não deixam páginas
+/// renderizadas e outros temporários para trás.
+pub fn cleanup_own_jobs() {
+    let Ok(entries) = fs::read_dir(jobs_root()) else { return };
+    let prefix = format!("{}-", std::process::id());
+    for entry in entries.flatten() {
+        if entry.file_name().to_string_lossy().starts_with(&prefix) {
+            let _ = fs::remove_dir_all(entry.path());
+        }
+    }
+}
+
 /// Grava um arquivo legível só pelo usuário (0600). Usado para entregar senhas
 /// ao qpdf dentro da pasta da tarefa, que é apagada ao fim.
 pub fn write_private(path: &Path, data: &[u8]) -> OpResult<()> {

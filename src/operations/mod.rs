@@ -16,7 +16,7 @@ pub use crate::engines::poppler::ImageFormat;
 pub use crate::pdfwriter::{ImageLayout, PageSize};
 pub use crate::secret::Secret;
 pub use crate::stamp::{NumberFormat, NumberStyle, Position, WatermarkStyle};
-pub use compress::CompressLevel;
+pub use compress::{CUSTOM_DPI, CompressLevel, Estimate, estimate as estimate_compression};
 pub use convert::OFFICE_EXTENSIONS;
 pub use edit::{DocFields, MetadataChange, unsupported_chars};
 pub use ocr::{OcrLanguage, OcrOptions, text_pages};

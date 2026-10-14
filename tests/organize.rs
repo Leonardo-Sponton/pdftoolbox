@@ -140,6 +140,40 @@ fn organize_reorders_duplicates_and_rotates() {
 }
 
 #[test]
+fn organize_inserts_blank_pages_sized_like_neighbours() {
+    let sb = Sandbox::new();
+    let portrait = sb.pdf("retrato.pdf", &["P1"]);
+    let landscape = sb.path("paisagem.pdf");
+    pdftoolbox::pdfwriter::text_pdf(&landscape, &["L2"], (842.0, 595.0)).unwrap();
+    let doc = run(Request::Merge { inputs: vec![portrait, landscape] }, &sb.dest()).unwrap().outputs.remove(0).path;
+    let pages = vec![
+        PageItem::blank(), // sem anterior: copia a seguinte (retrato)
+        PageItem { page: 1, rotation: 0 },
+        PageItem::blank(), // depois do retrato
+        PageItem { page: 2, rotation: 0 },
+        PageItem::blank(), // depois da paisagem
+        PageItem { page: 1, rotation: 90 },
+        PageItem { page: 0, rotation: 180 }, // depois do retrato girado: deitada, e girada ela mesma
+    ];
+    let out = run(Request::Organize { input: doc, pages }, &sb.dest()).unwrap();
+    let path = &out.outputs[0].path;
+    assert_eq!(page_texts(path), ["", "P1", "", "L2", "", "P1", ""]);
+    let sizes: Vec<(i32, i32)> = page_sizes(path).iter().map(|&(w, h)| (w.round() as i32, h.round() as i32)).collect();
+    // pdfinfo informa o tamanho sem a rotação; a 6ª e a 7ª têm /Rotate.
+    assert_eq!(sizes, [(595, 842), (595, 842), (595, 842), (842, 595), (842, 595), (595, 842), (842, 595)]);
+    assert_eq!(rotations(path), [0, 0, 0, 0, 0, 90, 180]);
+    assert!(out.notes[0].contains("4 delas em branco"), "{:?}", out.notes);
+}
+
+#[test]
+fn organize_needs_an_original_page() {
+    let sb = Sandbox::new();
+    let doc = sb.pdf("doc.pdf", &["P1"]);
+    let r = run(Request::Organize { input: doc, pages: vec![PageItem::blank()] }, &sb.dest());
+    assert!(matches!(r, Err(OpError::InvalidRange(_))));
+}
+
+#[test]
 fn invalid_and_empty_files_are_rejected() {
     let sb = Sandbox::new();
     let empty = sb.path("vazio.pdf");

@@ -77,7 +77,7 @@ pub const TOOLS: &[ToolInfo] = &[
         id: ToolId::Organize,
         key: "organizar",
         title: "Organizar páginas",
-        summary: "Reordene arrastando, gire, duplique e exclua páginas vendo as miniaturas",
+        summary: "Reordene arrastando, gire, duplique, exclua e insira páginas em branco vendo as miniaturas",
         icon: "pdftoolbox-organizar-symbolic",
         category: Category::Organize,
         accepts: Accepts::Pdf,

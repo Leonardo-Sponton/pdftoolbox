@@ -67,7 +67,7 @@ file, and updates as you type.
 
 | Tool | What it does |
 |---|---|
-| **Organize pages** | Thumbnails, multi-select, drag to reorder, rotate, duplicate, delete, undo, keyboard shortcuts |
+| **Organize pages** | Thumbnails, multi-select, drag to reorder, rotate, duplicate, delete, insert blank pages, enlarge a page, undo, keyboard shortcuts; asks before discarding unsaved changes |
 | **Merge PDFs** | Combine files in any order; the same file can be added more than once |
 | **Split PDF** | By ranges (`1-3, 4-8, 9-`), every N pages, or one file per page |
 | **Extract pages** | Into one PDF (in the order you type) or one file per page |
@@ -75,7 +75,7 @@ file, and updates as you type.
 | **Rotate PDF** | All pages or just some, across several files at once |
 | **Images to PDF** | JPEG, PNG, WebP, GIF, BMP, TIFF; A4 / Letter / image size; margins; JPEGs embedded without recompression; EXIF orientation; transparency |
 | **PDF to images** | PNG, JPEG (adjustable quality) or TIFF, 36–1200 DPI, in batch |
-| **Compress PDF** | Lossless (qpdf) or with image downsampling (Ghostscript); shows the savings and skips the output when there is no gain |
+| **Compress PDF** | Lossless (qpdf) or with image downsampling (Ghostscript) at 150 ppi, 96 ppi or a custom resolution; estimates the result size before running; shows the savings and skips the output when there is no gain |
 | **Number pages** | 6 positions, formats `1` · `1 / 10` · `Página 1 de 10`, starting number, text size, choose the pages (`2-` skips the cover) |
 | **Watermark** | Diagonal or horizontal text, color, opacity, size, choose the pages |
 | **Annotate and sign** | Text, today's date, highlights that keep the text readable, frames, and an image of your signature (light paper background removed); drag to place or use the keyboard; repeat on every page. A visual signature only — not a cryptographic digital signature |
@@ -242,11 +242,14 @@ you can open the new file or show it in its folder with one click.
 | | **Alt+←** | Back |
 | | **Ctrl+Q** | Quit |
 | Previews | **Tab**, arrows, **Enter** | Move between thumbnails and mark/unmark pages |
+| | **Space** (or right-click) | Enlarge the page; **←**/**→** browse, **Esc** closes |
 | Organizer | **Ctrl+R** / **Ctrl+Shift+R** | Rotate right / left |
 | | **Ctrl+D** | Duplicate |
 | | **Delete** | Delete pages |
 | | **Ctrl+←** / **Ctrl+→** | Move pages |
 | | **Ctrl+A** | Select all |
+| | **Ctrl+B** / **Insert** | Insert a blank page after the selection |
+| | **Space** (or double-click) | Enlarge the page |
 | | **Ctrl+Z** | Undo |
 | | **Ctrl+S** | Save |
 

@@ -15,9 +15,12 @@ use pdftoolbox::pdfwriter;
 use pdftoolbox::preview::{MarkKind, Plan};
 
 use super::page_thumb::PageThumb;
+use super::page_zoom::{self, ZoomItem};
 use super::thumbs;
 
 const CELL: i32 = 104;
+/// Altura de uma linha da grade: célula, número da página e margens.
+const ROW: i32 = CELL + 36;
 const CHUNK: u32 = 24;
 
 struct PageCell {
@@ -65,12 +68,17 @@ impl PagePreview {
         let summary = gtk::Label::builder().wrap(true).xalign(0.0).build();
         summary.add_css_class("pv-resumo");
         summary.set_accessible_role(gtk::AccessibleRole::Status);
+        let zoom_hint = "Para ampliar uma página, clique nela com o botão direito ou use a tecla espaço.";
         let hint = gtk::Label::builder()
-            .label("Clique numa página para marcá-la ou desmarcá-la.")
+            .label(
+                "Clique numa página para marcá-la ou desmarcá-la. Para ampliar, use o botão direito ou a tecla espaço.",
+            )
             .wrap(true)
             .xalign(0.0)
-            .visible(clickable)
             .build();
+        if !clickable {
+            hint.set_label(zoom_hint);
+        }
         hint.add_css_class("pv-legenda");
         let message = gtk::Label::builder().wrap(true).xalign(0.0).visible(false).build();
         message.add_css_class("dim-label");
@@ -130,6 +138,33 @@ impl PagePreview {
                 }
             });
         }
+        // Ampliar: espaço (antes do FlowBox, que o usaria para ativar) e botão direito.
+        let keys = gtk::EventControllerKey::new();
+        keys.set_propagation_phase(gtk::PropagationPhase::Capture);
+        let p = Rc::downgrade(&preview);
+        keys.connect_key_pressed(move |_, key, _, mods| {
+            if key == gtk::gdk::Key::space
+                && mods.is_empty()
+                && let Some(p) = p.upgrade()
+                && let Some(child) = p.flow.focus_child().and_downcast::<gtk::FlowBoxChild>()
+            {
+                p.zoom(child.index() as usize);
+                return glib::Propagation::Stop;
+            }
+            glib::Propagation::Proceed
+        });
+        flow.add_controller(keys);
+        let right = gtk::GestureClick::builder().button(gtk::gdk::BUTTON_SECONDARY).build();
+        let p = Rc::downgrade(&preview);
+        right.connect_pressed(move |g, _, x, y| {
+            if let Some(p) = p.upgrade()
+                && let Some(child) = p.flow.child_at_pos(x as i32, y as i32)
+            {
+                g.set_state(gtk::EventSequenceState::Claimed);
+                p.zoom(child.index() as usize);
+            }
+        });
+        flow.add_controller(right);
         let p = Rc::downgrade(&preview);
         chooser.connect_selected_notify(move |d| {
             if let Some(p) = p.upgrade()
@@ -141,6 +176,26 @@ impl PagePreview {
         });
         preview.load(None);
         preview
+    }
+
+    /// Abre a página `index` (0 = primeira) ampliada, com a rotação planejada.
+    fn zoom(&self, index: usize) {
+        let (Some(path), Some(total)) = (self.current(), self.total.get()) else { return };
+        let items = self
+            .cells
+            .borrow()
+            .iter()
+            .enumerate()
+            .map(|(i, c)| {
+                let rotation = c.thumb.rotation();
+                let mut label = format!("Página {} de {total}", i + 1);
+                if rotation != 0 {
+                    label.push_str(&format!(" · girada {rotation}°"));
+                }
+                ZoomItem { page: i as u32 + 1, rotation, label, texture: None }
+            })
+            .collect();
+        page_zoom::show(&self.group, path, items, index);
     }
 
     pub fn connect_loaded(&self, f: impl Fn() + 'static) {
@@ -231,8 +286,10 @@ impl PagePreview {
             };
             p.total.set(Some(total));
             p.set_cells(total);
-            // Duas linhas e meia visíveis quando houver páginas para isso.
-            p.scroll.set_min_content_height(if total > 6 { 300 } else { -1 });
+            // Duas linhas e meia visíveis quando houver páginas para isso; senão,
+            // ao menos uma linha inteira (a altura natural do FlowBox, medida
+            // antes das miniaturas, cortava as células pela metade).
+            p.scroll.set_min_content_height(if total > 6 { 300 } else { ROW });
             p.show_message(None);
             p.summary.set_visible(true);
             p.notify_loaded();

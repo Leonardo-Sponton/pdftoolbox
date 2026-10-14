@@ -11,8 +11,12 @@ fn main() -> glib::ExitCode {
     app.connect_startup(ui::startup);
     app.connect_activate(|app| ui::activate(app, &[]));
     app.connect_open(|app, files, _| ui::activate(app, files));
-    // Ao sair (inclusive por SIGTERM/SIGINT), nenhum motor externo fica rodando.
-    app.connect_shutdown(|_| pdftoolbox::engines::kill_all_running());
+    // Ao sair (inclusive por SIGTERM/SIGINT), nenhum motor externo fica rodando
+    // e as pastas temporárias das tarefas são apagadas.
+    app.connect_shutdown(|_| {
+        pdftoolbox::engines::kill_all_running();
+        pdftoolbox::storage::cleanup_own_jobs();
+    });
     watch_termination(&app);
     app.run()
 }

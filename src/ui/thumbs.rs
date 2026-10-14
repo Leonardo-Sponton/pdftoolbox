@@ -293,6 +293,25 @@ pub async fn stamped_page(
     Some(pixels.texture())
 }
 
+/// Página `page` renderizada grande (lado maior = `size` px), para o
+/// visualizador ampliado. Não entra no cache das miniaturas.
+pub async fn large_page(path: &Path, page: u32, size: u32) -> Option<gdk::Texture> {
+    let p = path.to_path_buf();
+    let pixels = widgets::blocking(move || -> Option<Pixels> {
+        let dir = JobDir::new().ok()?;
+        let files = poppler::thumbnails(&p, page, page, size, dir.path(), &CancelToken::new()).ok()?;
+        image::open(files.first()?).ok().map(Pixels::from_image)
+    })
+    .await?;
+    Some(pixels.texture())
+}
+
+/// Folha branca `w` × `h` px (páginas em branco do organizador).
+pub fn blank_texture(w: u32, h: u32) -> gdk::Texture {
+    let (w, h) = (w.max(1), h.max(1));
+    Pixels { width: w, height: h, data: vec![255; (w * h * 4) as usize] }.texture()
+}
+
 /// Texto da página `page` (pré-visualização da extração).
 pub async fn page_text(path: &Path, page: u32, layout: bool) -> Option<String> {
     let p = path.to_path_buf();

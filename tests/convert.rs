@@ -4,7 +4,9 @@ use common::*;
 use image::{ImageBuffer, Rgb, Rgba};
 use pdftoolbox::OpError;
 use pdftoolbox::jobs::{CancelToken, JobCtx};
-use pdftoolbox::operations::{CompressLevel, Destination, ImageFormat, ImageLayout, PageSize, Request, execute};
+use pdftoolbox::operations::{
+    CompressLevel, Destination, ImageFormat, ImageLayout, PageSize, Request, estimate_compression, execute,
+};
 
 /// JPEG 20×10: metade esquerda vermelha, direita azul.
 fn two_tone_jpeg(path: &std::path::Path) {
@@ -251,4 +253,75 @@ fn image_downsampling_with_ghostscript() {
     assert_eq!(out.outputs.len(), 1, "{:?}", out.notes);
     assert!(out.outputs[0].size < pdf.size / 2, "{} vs {}", out.outputs[0].size, pdf.size);
     assert_eq!(page_sizes(&out.outputs[0].path).len(), 1);
+}
+
+#[test]
+fn estimate_of_short_document_is_exact() {
+    let sb = Sandbox::new();
+    let doc = bloated_pdf(&sb);
+    let est = estimate_compression(&doc, CompressLevel::Lossless, &CancelToken::new()).unwrap();
+    assert!(est.exact);
+    assert!(est.worthwhile());
+    let out = run(Request::Compress { inputs: vec![doc], level: CompressLevel::Lossless }, &sb.dest()).unwrap();
+    assert_eq!(est.estimated, out.outputs[0].size);
+}
+
+/// PDF de `n` páginas, cada uma com uma foto de ruído diferente.
+fn noisy_pdf(sb: &Sandbox, n: u32, side: u32) -> std::path::PathBuf {
+    let mut seed = 777u32;
+    let inputs: Vec<_> = (0..n)
+        .map(|i| {
+            let img = ImageBuffer::from_fn(side, side, |_, _| {
+                seed = seed.wrapping_mul(1_103_515_245).wrapping_add(12345);
+                let v = (seed >> 16) as u8;
+                Rgb([v, v.wrapping_add((i * 20) as u8), 128])
+            });
+            let png = sb.path(&format!("ruido-{i}.png"));
+            img.save(&png).unwrap();
+            png
+        })
+        .collect();
+    run(Request::ImagesToPdf { inputs, layout: ImageLayout::default(), one_file: true }, &sb.dest())
+        .unwrap()
+        .outputs
+        .remove(0)
+        .path
+}
+
+#[test]
+fn sampled_estimate_is_close_to_the_real_result() {
+    if !has("gs") {
+        eprintln!("Ghostscript ausente: teste ignorado");
+        return;
+    }
+    let sb = Sandbox::new();
+    // 500 px numa página A4 com margem ficam a ≈ 72 ppp; 40 ppp reduz de verdade.
+    let pdf = noisy_pdf(&sb, 14, 500);
+    let level = CompressLevel::Custom(40);
+    let est = estimate_compression(&pdf, level, &CancelToken::new()).unwrap();
+    assert!(!est.exact, "14 páginas devem ser estimadas por amostra");
+    let out = run(Request::Compress { inputs: vec![pdf], level }, &sb.dest()).unwrap();
+    assert_eq!(out.outputs.len(), 1, "{:?}", out.notes);
+    let real = out.outputs[0].size as f64;
+    let error = (est.estimated as f64 - real).abs() / real;
+    assert!(error < 0.25, "estimativa {} vs real {real} ({:.0}% de erro)", est.estimated, error * 100.0);
+}
+
+#[test]
+fn custom_resolution_controls_image_size() {
+    if !has("gs") {
+        eprintln!("Ghostscript ausente: teste ignorado");
+        return;
+    }
+    let sb = Sandbox::new();
+    let pdf = noisy_pdf(&sb, 1, 1200);
+    let size = |dpi| {
+        let d = sb.subdir(&format!("ppp-{dpi}"));
+        let dest = Destination { dir: d, name: None };
+        run(Request::Compress { inputs: vec![pdf.clone()], level: CompressLevel::Custom(dpi) }, &dest).unwrap().outputs
+            [0]
+        .size
+    };
+    let (low, high) = (size(50), size(200));
+    assert!(low * 3 < high, "50 ppp ({low}) deveria ser bem menor que 200 ppp ({high})");
 }

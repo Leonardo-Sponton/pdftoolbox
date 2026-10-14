@@ -120,6 +120,10 @@ impl PageThumb {
         }
     }
 
+    pub fn rotation(&self) -> i32 {
+        self.imp().rotation.get()
+    }
+
     pub fn set_max(&self, max_w: i32, max_h: i32) {
         self.imp().max.set((max_w, max_h));
         self.queue_resize();

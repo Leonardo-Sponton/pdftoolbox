@@ -3,17 +3,50 @@
 use std::path::{Path, PathBuf};
 
 use super::{Destination, Outcome, SplitMode, batch, output_name, verify_pdf};
-use crate::engines::qpdf;
+use crate::engines::{poppler, qpdf};
 use crate::error::{OpError, OpResult};
 use crate::jobs::JobCtx;
 use crate::pages::{self, compact_list};
 use crate::storage::{self, JobDir, stem};
 
 /// Página na ordem final: número original e rotação adicional em graus.
+/// `page == 0` é uma página em branco nova (veja [`PageItem::blank`]).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct PageItem {
     pub page: u32,
     pub rotation: i32,
+}
+
+impl PageItem {
+    /// Página em branco com o tamanho e a orientação da página anterior no
+    /// documento final (ou da seguinte, se ela for a primeira).
+    pub fn blank() -> Self {
+        PageItem { page: 0, rotation: 0 }
+    }
+
+    pub fn is_blank(&self) -> bool {
+        self.page == 0
+    }
+}
+
+/// Tamanho (em pontos, como exibido) de cada página em branco de `items`,
+/// copiado da página original mais próxima: a anterior ou, sem ela, a seguinte.
+/// A rotação dada à vizinha no organizador também é considerada.
+pub fn blank_sizes(items: &[PageItem], sizes: &[(f32, f32)]) -> Vec<(f32, f32)> {
+    let shown = |it: &PageItem| {
+        let (w, h) = sizes.get(it.page as usize - 1).copied().unwrap_or(crate::pdfwriter::A4_POINTS);
+        if it.rotation.rem_euclid(180) == 90 { (h, w) } else { (w, h) }
+    };
+    items
+        .iter()
+        .enumerate()
+        .filter(|(_, it)| it.is_blank())
+        .map(|(i, _)| {
+            let before = items[..i].iter().rev().find(|it| !it.is_blank());
+            let after = items[i + 1..].iter().find(|it| !it.is_blank());
+            before.or(after).map(shown).unwrap_or(crate::pdfwriter::A4_POINTS)
+        })
+        .collect()
 }
 
 fn page_label(pages: &[u32]) -> String {
@@ -162,15 +195,39 @@ pub fn organize(input: &Path, items: &[PageItem], dest: &Destination, ctx: &JobC
     if items.is_empty() {
         return Err(OpError::InvalidRange("O documento final não pode ficar sem páginas.".into()));
     }
+    if items.iter().all(PageItem::is_blank) {
+        return Err(OpError::InvalidRange("O documento final precisa ter pelo menos uma página original.".into()));
+    }
     let total = qpdf::page_count(input, &ctx.cancel)?;
-    if let Some(bad) = items.iter().find(|it| it.page == 0 || it.page > total) {
+    if let Some(bad) = items.iter().find(|it| it.page > total) {
         return Err(OpError::PageOutOfRange { page: bad.page, total });
     }
     let job = JobDir::new()?;
     let ordered = job.file("ordenado.pdf");
     ctx.report(0.2, "Reorganizando páginas");
-    let order: Vec<u32> = items.iter().map(|it| it.page).collect();
-    build(input, &order, &ordered, ctx)?;
+    // Páginas em branco vêm de um PDF gerado aqui, uma por item em branco.
+    let blanks = job.file("em-branco.pdf");
+    let blank_count = items.iter().filter(|it| it.is_blank()).count();
+    if blank_count > 0 {
+        let sizes = poppler::page_sizes(input, total, &ctx.cancel)?;
+        let pages: Vec<_> =
+            blank_sizes(items, &sizes).into_iter().map(|(w, h)| crate::pdfwriter::OverlayPage::empty(w, h)).collect();
+        crate::pdfwriter::overlay_pdf(&blanks, &pages).map_err(|e| OpError::io("criar as páginas em branco", e))?;
+    }
+    let mut next_blank = 0;
+    let sources: Vec<(&Path, u32)> = items
+        .iter()
+        .map(|it| {
+            if it.is_blank() {
+                next_blank += 1;
+                (blanks.as_path(), next_blank)
+            } else {
+                (input, it.page)
+            }
+        })
+        .collect();
+    qpdf::assemble(&sources, &ordered, &ctx.cancel)?;
+    verify_pdf(&ordered, items.len() as u32, ctx)?;
 
     // Rotações referem-se às posições no documento final.
     let mut rotations: Vec<(i32, Vec<u32>)> = Vec::new();
@@ -197,6 +254,10 @@ pub fn organize(input: &Path, items: &[PageItem], dest: &Destination, ctx: &JobC
     let mut outcome = Outcome::default();
     let name = output_name(dest, &format!("{} - organizado", stem(input)), "pdf");
     outcome.push(storage::commit(&result, &dest.dir, &name)?);
-    outcome.notes.push(format!("{} página(s) no documento final.", items.len()));
+    let mut note = format!("{} página(s) no documento final", items.len());
+    if blank_count > 0 {
+        note.push_str(&format!(", {blank_count} delas em branco"));
+    }
+    outcome.notes.push(note + ".");
     Ok(outcome)
 }

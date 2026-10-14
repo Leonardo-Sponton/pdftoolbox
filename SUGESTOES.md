@@ -1,6 +1,6 @@
 # Sugestões futuras
 
-Anotações de 2026-10-14 (atualizadas na versão 0.3.0). A situação oficial de cada
+Anotações de 2026-10-14 (atualizadas na versão 0.4.0). A situação oficial de cada
 recurso continua em [FEATURE_MATRIX.md](FEATURE_MATRIX.md); aqui ficam as ideias
 e os próximos passos recomendados, em ordem de prioridade.
 
@@ -14,8 +14,7 @@ e os próximos passos recomendados, em ordem de prioridade.
 2. ~~Anotar e assinatura visual~~ — feito (“Anotar e assinar”). Pendências:
    **testar o arrastar com o mouse** numa sessão real (aqui só o teclado foi
    verificado); desfazer agrupando vários toques de seta num passo; zoom na
-   página; Esc no **Organizador** também descarta as alterações sem perguntar
-   (o Anotar já pergunta — aplicar o mesmo `can-pop` lá).
+   página. ~~Esc no Organizador descartava sem perguntar~~ — corrigido.
 3. **Abrir PDFs com senha direto nas ferramentas** (pedir a senha num diálogo
    e trabalhar numa cópia temporária desbloqueada), em vez de mandar para
    “Remover senha”.
@@ -37,24 +36,23 @@ Decisões pendentes:
 
 ## Melhorias na versão atual
 
-- **Inserir página em branco** no organizador (o gerador interno já cria
-  páginas; falta o botão e o tamanho baseado na página vizinha).
-- **Resolução livre na compressão** (campo de ppp, além dos dois níveis fixos).
+- ~~Inserir página em branco~~, ~~resolução livre na compressão~~,
+  ~~comprimir com estimativa~~, ~~prévia ampliada da página~~ e ~~confirmar ao
+  fechar~~ — feitos na 0.4.0.
 - ~~Ícones próprios~~ e ~~sugestão de ferramenta na tela inicial~~ — feitos na 0.2.0.
+- **Estimativa de compressão mais precisa** em PDFs cujas páginas compartilham
+  muitos recursos (a amostra copia fontes e imagens comuns para cada página);
+  hoje o erro medido foi pequeno nos testes, mas não há garantia nesses casos.
+- **Ampliar com zoom real** (rolar e aproximar além do tamanho da janela) e
+  ampliar também no Anotar.
 - **Organizador com o mesmo visual de “papel”** das novas pré-visualizações
   (`PageThumb`), e girar desenhado de verdade em vez de transformação CSS.
-- **Comprimir com estimativa** — comprimir uma amostra de páginas em segundo
-  plano para mostrar “≈ X MB” antes de executar.
-- **Prévia da página escolhida ampliada** (clique duplo ou espaço abre a página
-  grande), útil para conferir detalhes antes de remover.
 - **Cache de miniaturas em disco** entre aberturas (hoje o cache é só em
   memória, durante a sessão) — avaliar privacidade: ficaria em `~/.cache`.
 - **Miniaturas mais rápidas de fotos grandes** — decodificar JPEG em escala
   reduzida em vez de abrir a imagem inteira.
 - **Teste automatizado da fila** (limite de 2 tarefas) e do arrastar com mouse
   no organizador, que ainda não foram validados.
-- **Confirmar ao fechar com tarefa em andamento** — hoje fechar encerra os
-  motores e descarta a tarefa sem perguntar.
 
 ## Instalação e distribuição
 

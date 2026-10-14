@@ -1,5 +1,29 @@
 # Changelog
 
+## 0.4.0 — 2026-10-14
+
+### Adicionado
+- **Organizar — inserir página em branco** (Ctrl+B ou Insert): entra depois da
+  página selecionada, com o tamanho e a orientação da página anterior.
+- **Ampliar página:** espaço abre a página em tamanho grande no Organizar e nas
+  pré-visualizações (Girar, Extrair, Remover, Dividir, Numerar, Marca d’água);
+  também clique duplo no Organizar e botão direito nas pré-visualizações.
+  ← e → passam pelas páginas; mostra a rotação planejada.
+- **Comprimir — nível “Personalizada”:** resolução das imagens de 36 a 600 ppp.
+- **Comprimir — tamanho estimado** antes de executar, calculado em segundo
+  plano (documento inteiro até 8 páginas; amostra de 8 páginas nos maiores).
+
+### Alterado
+- **Organizar pergunta antes de descartar** alterações não salvas (Esc,
+  voltar, abrir outro arquivo); fechar a janela também pergunta quando há
+  alterações não salvas no Organizar ou no Anotar.
+- Ao sair, as pastas temporárias das tarefas interrompidas são apagadas na
+  hora (antes, só na abertura seguinte).
+
+### Corrigido
+- Pré-visualização de documentos com até 6 páginas cortava as miniaturas pela
+  metade.
+
 ## 0.3.0 — 2026-10-14
 
 Fase 2 completa: nove ferramentas novas — numerar, marca d’água, metadados,

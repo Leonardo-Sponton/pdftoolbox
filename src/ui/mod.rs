@@ -7,6 +7,7 @@ mod home;
 mod organizer;
 mod page_preview;
 mod page_thumb;
+mod page_zoom;
 mod settings;
 mod tasks;
 mod theme;
@@ -233,18 +234,33 @@ fn build_window(app: &adw::Application) -> App {
     ];
     window.add_action_entries(actions);
 
-    // Avisar antes de fechar com tarefas em andamento.
+    // Avisar antes de fechar com tarefas em andamento ou alterações não
+    // salvas (páginas que não podem sair sozinhas: Organizar e Anotar).
     window.connect_close_request({
         let weak = weak.clone();
         move |win| {
             let Some(st) = weak.upgrade() else { return glib::Propagation::Proceed };
-            if st.tasks.running() == 0 {
+            let unsaved =
+                st.nav.navigation_stack().iter::<adw::NavigationPage>().flatten().any(|p| !p.can_pop());
+            let running = st.tasks.running();
+            if running == 0 && !unsaved {
                 return glib::Propagation::Proceed;
             }
-            let dialog = adw::AlertDialog::new(
-                Some("Há tarefas em andamento"),
-                Some("Se fechar agora, as tarefas serão interrompidas e os arquivos parciais descartados."),
-            );
+            let (title, body) = match (running, unsaved) {
+                (0, _) => (
+                    "Descartar as alterações?",
+                    "Há alterações que ainda não foram salvas. Se fechar agora, elas serão perdidas; os PDFs originais não foram alterados.",
+                ),
+                (_, false) => (
+                    "Há tarefas em andamento",
+                    "Se fechar agora, as tarefas serão interrompidas e os arquivos parciais descartados.",
+                ),
+                _ => (
+                    "Há tarefas em andamento e alterações não salvas",
+                    "Se fechar agora, as tarefas serão interrompidas, os arquivos parciais descartados e as alterações não salvas perdidas.",
+                ),
+            };
+            let dialog = adw::AlertDialog::new(Some(title), Some(body));
             dialog.add_responses(&[("ficar", "Continuar aqui"), ("sair", "Fechar mesmo assim")]);
             dialog.set_response_appearance("sair", adw::ResponseAppearance::Destructive);
             dialog.set_default_response(Some("ficar"));

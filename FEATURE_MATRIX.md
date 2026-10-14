@@ -21,21 +21,23 @@ gerado foi conferido.
 | Reordenar arrastando miniaturas | Implementado, não validado | qpdf + Poppler | Operação testada; arrastar com mouse não foi automatizado (teclado Ctrl+←/→ verificado) |
 | Girar páginas (individual/conjunto) | Implementado e testado | qpdf | Ferramenta Girar (lote) e organizador; UI verificada |
 | Duplicar páginas | Implementado e testado | qpdf | Organizador; UI verificada |
-| Inserir páginas em branco | Não iniciado | — | O gerador interno já cria páginas; falta a UI |
+| Inserir páginas em branco | Implementado e testado | qpdf + gerador próprio | Organizador (Ctrl+B ou Insert): entra depois da seleção, com o tamanho e a orientação da página anterior (ou da seguinte, se for a primeira), inclusive quando a vizinha foi girada no organizador. Testes conferem tamanhos, rotação e que a página sai vazia; UI verificada com documento retrato + paisagem |
 | Inserir páginas de outro PDF | Parcialmente suportado | qpdf | Possível via Mesclar + Organizar; sem fluxo dedicado |
 | Misturar páginas de dois documentos | Não iniciado | — | |
 | Recortar margens | Não iniciado | — | |
 | Miniaturas antes de confirmar | Implementado e testado | Poppler | Organizador; carregamento em blocos de 12 |
 | Contagem de páginas e ordem final | Implementado e testado | — | Rótulo “posição · pág. original” |
 | Salvar em novo arquivo | Implementado e testado | — | Nunca sobrescreve |
+| Aviso ao sair sem salvar | Implementado e testado | — | Esc, Alt+←, “voltar”, “Abrir outro…”, soltar outro arquivo e fechar a janela perguntam antes de descartar; desfazer até o estado salvo libera a saída. UI verificada |
 
 ## 4.2 Comprimir e otimizar
 
 | Recurso | Estado | Motor | Observações |
 |---|---|---|---|
-| Níveis de intensidade | Implementado e testado | qpdf, Ghostscript | Sem perda / Recomendada (150 ppp) / Máxima (96 ppp) |
+| Níveis de intensidade | Implementado e testado | qpdf, Ghostscript | Sem perda / Recomendada (150 ppp) / Máxima (96 ppp) / Personalizada |
 | Compressão de imagens | Implementado e testado | Ghostscript | JPEG via pdfwrite |
-| Redução de resolução configurável | Parcialmente suportado | Ghostscript | Dois níveis fixos; sem campo livre de ppp |
+| Redução de resolução configurável | Implementado e testado | Ghostscript | Nível “Personalizada”: 36 a 600 ppp. Teste confere que 50 ppp gera arquivo bem menor que 200 ppp; UI verificada |
+| Estimativa de tamanho antes de comprimir | Implementado e testado | qpdf, Ghostscript | Calculada em segundo plano numa pasta temporária: documentos de até 8 páginas são comprimidos inteiros (valor exato); nos maiores, 8 páginas espalhadas formam a amostra. Testes: exata = resultado real; amostra a menos de 25% do real. Na UI, álbum de fotos de 16 páginas: previsto 2,1 MB / real 2,06 MB (150 ppp) e 399,5 KB / 400 KB (70 ppp). PDFs com recursos muito compartilhados entre páginas podem desviar mais |
 | Recursos duplicados | Implementado, não validado | Ghostscript | `-dDetectDuplicateImages`; sem teste específico |
 | Otimização estrutural | Implementado e testado | qpdf | Object streams, recompressão Flate nível 9 |
 | Comparar tamanhos / economia | Implementado e testado | — | Bytes e %; não grava se a economia < 1% e explica |
@@ -82,7 +84,8 @@ gerado foi conferido.
 | Vários arquivos / arrastar vários | Implementado e testado | Girar, Imagens→PDF, PDF→imagens, Comprimir |
 | Fila e limite de concorrência | Implementado, não validado | Máx. 2 tarefas simultâneas; sem teste automatizado da fila |
 | Progresso por arquivo e geral | Implementado e testado | Barra única com texto “arquivo: página X de Y” |
-| Cancelamento | Implementado e testado | Real: encerra o grupo de processos (inclui os filhos do LibreOffice); lote mantém o que já foi gravado e informa. Ao fechar o app (ou SIGTERM/SIGINT), motores em execução são encerrados — verificado com o LibreOffice |
+| Cancelamento | Implementado e testado | Real: encerra o grupo de processos (inclui os filhos do LibreOffice); lote mantém o que já foi gravado e informa. Ao fechar o app (ou SIGTERM/SIGINT), motores em execução são encerrados e as pastas temporárias das tarefas apagadas — verificado com o LibreOffice e com o OCR |
+| Confirmar ao fechar | Implementado e testado | Com tarefa em andamento ou alterações não salvas (Organizar, Anotar), fechar a janela pergunta antes. UI verificada: “Fechar mesmo assim” durante um OCR não deixa resultado parcial, processos nem temporários |
 | Falha isolada em lote + relatório | Implementado e testado | UI verificada |
 | Retentativa | Parcialmente suportado | Botão “Tentar novamente” refaz a tarefa inteira |
 | Diretório de saída configurável | Implementado e testado | Padrão: pasta do original |
@@ -101,6 +104,7 @@ gerado foi conferido.
 | Sugestão de ferramenta e motivo das indisponíveis | Implementado e testado | UI verificada |
 | Pré-visualização de Girar/Extrair/Remover/Dividir | Implementado e testado | Plano com testes automatizados; UI verificada; resultado de Girar e Remover conferido com `pdfinfo`/`qpdf` |
 | Marcar páginas clicando na pré-visualização | Implementado, não validado | Lógica testada (`toggle_page`); clique com mouse não foi automatizado |
+| Ampliar uma página | Implementado e testado | Espaço (ou clique duplo/Enter no organizador; botão direito nas pré-visualizações) abre a página grande, com a rotação planejada; ← e → passam pelas páginas na ordem da grade. UI verificada pelo teclado; clique duplo e botão direito com o mouse não foram automatizados |
 | Pré-visualização de Imagens para PDF | Implementado e testado | Usa a mesma função `place` da conversão (testada) |
 | Ícones próprios recoloríveis | Implementado e testado | Verificados com o tema Sweet/Candy |
 | Estados: vazio, processando, sucesso, aviso, falha, cancelado, inválido, senha, dependência ausente, sem espaço, sem permissão | Implementado e testado | Mensagens por tipo de erro; sem espaço testado só por classificação de `ENOSPC` |
