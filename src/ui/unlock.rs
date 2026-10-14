@@ -89,8 +89,10 @@ pub async fn prepare(app: &Rc<AppState>, files: Vec<PathBuf>) -> Vec<PathBuf> {
     }
     match skipped.as_slice() {
         [] => {}
-        [one] => app.toast(&format!("“{}” ficou de fora: é preciso a senha para abri-lo.", human::file_name(one))),
-        many => app.toast(&format!("{} PDFs ficaram de fora: é preciso a senha para abri-los.", many.len())),
+        [one] => {
+            app.toast(&tr!("“{file}” ficou de fora: é preciso a senha para abri-lo.", file = human::file_name(one)))
+        }
+        many => app.toast(&tr!("{n} PDFs ficaram de fora: é preciso a senha para abri-los.", n = many.len())),
     }
     ready
 }
@@ -110,7 +112,7 @@ async fn ask(app: &Rc<AppState>, file: &Path) -> Option<PathBuf> {
                 return Some(path);
             }
             Err(OpError::WrongPassword(_)) => {
-                problem = Some("Senha incorreta. Confira maiúsculas, minúsculas e acentos.".into());
+                problem = Some(tr!("Senha incorreta. Confira maiúsculas, minúsculas e acentos.").into());
             }
             Err(e @ OpError::OwnerPasswordRequired(_)) => problem = Some(e.to_string()),
             Err(e) => {
@@ -124,20 +126,20 @@ async fn ask(app: &Rc<AppState>, file: &Path) -> Option<PathBuf> {
 /// Diálogo de senha. `None` = cancelado.
 async fn dialog(app: &Rc<AppState>, file: &Path, problem: Option<&str>) -> Option<Secret> {
     let dialog = adw::AlertDialog::builder()
-        .heading("PDF protegido por senha")
-        .body(format!(
-            "Digite a senha de “{}”. A ferramenta trabalha numa cópia temporária desbloqueada; o original \
+        .heading(tr!("PDF protegido por senha"))
+        .body(tr!(
+            "Digite a senha de “{file}”. A ferramenta trabalha numa cópia temporária desbloqueada; o original \
              continua como está e o resultado é salvo sem senha.",
-            human::file_name(file)
+            file = human::file_name(file)
         ))
         .close_response("cancelar")
         .default_response("abrir")
         .build();
-    dialog.add_response("cancelar", "Cancelar");
-    dialog.add_response("abrir", "Abrir");
+    dialog.add_response("cancelar", tr!("Cancelar"));
+    dialog.add_response("abrir", tr!("Abrir"));
     dialog.set_response_appearance("abrir", adw::ResponseAppearance::Suggested);
     let entry = gtk::PasswordEntry::builder().show_peek_icon(true).activates_default(true).build();
-    entry.update_property(&[gtk::accessible::Property::Label("Senha do documento")]);
+    entry.update_property(&[gtk::accessible::Property::Label(tr!("Senha do documento"))]);
     let column = gtk::Box::new(gtk::Orientation::Vertical, 8);
     column.append(&entry);
     if let Some(text) = problem {

@@ -151,7 +151,7 @@ impl ZoomControls {
 /// “Ajustada”, “1,5×”, “2×”.
 pub fn zoom_label(z: f64) -> String {
     if z <= 1.0 + 1e-6 {
-        "Ajustada".into()
+        tr!("Ajustada").into()
     } else if (z - z.round()).abs() < 0.05 {
         format!("{}×", z.round())
     } else {
@@ -203,11 +203,11 @@ pub fn show(parent: &impl IsA<gtk::Widget>, path: PathBuf, items: Vec<ZoomItem>,
 
     let title = adw::WindowTitle::new("", &human::file_name(&path));
     let header = adw::HeaderBar::builder().title_widget(&title).build();
-    let prev = super::widgets::icon_button("go-previous-symbolic", "Página anterior (←)");
-    let next = super::widgets::icon_button("go-next-symbolic", "Próxima página (→)");
+    let prev = super::widgets::icon_button("go-previous-symbolic", tr!("Página anterior (←)"));
+    let next = super::widgets::icon_button("go-next-symbolic", tr!("Próxima página (→)"));
     header.pack_start(&prev);
     header.pack_start(&next);
-    let controls = ZoomControls::new("Afastar (−)", "Ajustar à janela (0)", "Aproximar (+)");
+    let controls = ZoomControls::new(tr!("Afastar (−)"), tr!("Ajustar à janela (0)"), tr!("Aproximar (+)"));
     header.pack_end(&controls.widget);
 
     // Altura útil: descontando a barra de título e as margens.

@@ -15,7 +15,7 @@ const OK: &[i32] = &[0, 3];
 /// Abre o documento e devolve o número de páginas, distinguindo arquivo
 /// inválido de arquivo protegido por senha.
 pub fn page_count(path: &Path, cancel: &CancelToken) -> OpResult<u32> {
-    std::fs::File::open(path).map_err(|e| OpError::io_path("abrir", path, e))?;
+    std::fs::File::open(path).map_err(|e| OpError::io_path(tr!("abrir “{file}”"), path, e))?;
     let out = run(Tool::Qpdf, [OsString::from("--show-npages"), path.into()], cancel)?;
     if matches!(out.code, Some(0 | 3)) {
         let text = String::from_utf8_lossy(&out.stdout);
@@ -98,9 +98,9 @@ pub fn check(path: &Path, cancel: &CancelToken) -> OpResult<()> {
     let out = run(Tool::Qpdf, [OsString::from("--check"), path.into()], cancel)?;
     match out.code {
         Some(0 | 3) => Ok(()),
-        _ => Err(OpError::OutputInvalid(format!(
-            "qpdf --check falhou: {}",
-            String::from_utf8_lossy(&out.stdout).lines().chain(out.stderr.lines()).last().unwrap_or("")
+        _ => Err(OpError::OutputInvalid(tr!(
+            "qpdf --check falhou: {detail}",
+            detail = String::from_utf8_lossy(&out.stdout).lines().chain(out.stderr.lines()).last().unwrap_or("")
         ))),
     }
 }
@@ -140,7 +140,7 @@ pub enum Encryption {
 }
 
 pub fn encryption(path: &Path, cancel: &CancelToken) -> OpResult<Encryption> {
-    std::fs::File::open(path).map_err(|e| OpError::io_path("abrir", path, e))?;
+    std::fs::File::open(path).map_err(|e| OpError::io_path(tr!("abrir “{file}”"), path, e))?;
     let out = run(Tool::Qpdf, [OsString::from("--requires-password"), path.into()], cancel)?;
     match out.code {
         Some(0) => Ok(Encryption::Password),
@@ -197,7 +197,7 @@ pub fn page_count_with_password(path: &Path, password_file: &Path, cancel: &Canc
     String::from_utf8_lossy(&out.stdout)
         .trim()
         .parse()
-        .map_err(|_| OpError::OutputInvalid("o qpdf não informou o número de páginas".into()))
+        .map_err(|_| OpError::OutputInvalid(tr!("o qpdf não informou o número de páginas").into()))
 }
 
 /// Criptografa com AES-256. As opções (senhas incluídas) ficam em
@@ -222,14 +222,15 @@ fn json_object(input: &Path, object: &str, cancel: &CancelToken) -> OpResult<ser
     let args: Vec<OsString> =
         vec!["--json=2".into(), "--json-key=qpdf".into(), format!("--json-object={object}").into(), input.into()];
     let out = run_ok(Tool::Qpdf, args, OK, cancel)?;
-    serde_json::from_slice(&out.stdout).map_err(|_| OpError::OutputInvalid("JSON do qpdf sem formato válido".into()))
+    serde_json::from_slice(&out.stdout)
+        .map_err(|_| OpError::OutputInvalid(tr!("JSON do qpdf sem formato válido").into()))
 }
 
 /// Lê o trailer e o maior número de objeto, para montar uma atualização JSON.
 pub fn trailer(input: &Path, cancel: &CancelToken) -> OpResult<(serde_json::Value, u64)> {
     let json = json_object(input, "trailer", cancel)?;
-    let bad = |what: &str| OpError::OutputInvalid(format!("JSON do qpdf sem {what}"));
-    let qpdf = json.get("qpdf").and_then(|q| q.as_array()).ok_or_else(|| bad("a chave qpdf"))?;
+    let bad = |what: &str| OpError::OutputInvalid(tr!("JSON do qpdf sem {key}", key = what));
+    let qpdf = json.get("qpdf").and_then(|q| q.as_array()).ok_or_else(|| bad("qpdf"))?;
     let max = qpdf
         .first()
         .and_then(|h| h.get("maxobjectid"))

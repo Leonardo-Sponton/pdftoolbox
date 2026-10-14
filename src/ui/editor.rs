@@ -57,23 +57,23 @@ impl EditorChrome {
         let header = adw::HeaderBar::new();
         // Com alterações não salvas, a página não sai sozinha (can-pop falso):
         // este botão substitui o “voltar” e pede confirmação.
-        let back = widgets::icon_button("go-previous-symbolic", "Voltar");
+        let back = widgets::icon_button("go-previous-symbolic", tr!("Voltar"));
         back.set_action_name(Some("page.leave"));
         back.set_visible(false);
         header.pack_start(&back);
         let open = gtk::Button::builder()
-            .label("Abrir outro…")
-            .tooltip_text("Escolher outro PDF (Ctrl+O)")
+            .label(tr!("Abrir outro…"))
+            .tooltip_text(tr!("Escolher outro PDF (Ctrl+O)"))
             .action_name(empty.open_action)
             .build();
         header.pack_start(&open);
         header.pack_end(&primary_menu());
         let save_menu = gio::Menu::new();
-        save_menu.append(Some("Salvar em outra pasta…"), Some("page.save-as"));
+        save_menu.append(Some(tr!("Salvar em outra pasta…")), Some("page.save-as"));
         let save = adw::SplitButton::builder()
-            .label("Salvar")
+            .label(tr!("Salvar"))
             .menu_model(&save_menu)
-            .tooltip_text("Salvar como novo arquivo na pasta do original (Ctrl+S)")
+            .tooltip_text(tr!("Salvar como novo arquivo na pasta do original (Ctrl+S)"))
             .action_name("page.run")
             .sensitive(false)
             .build();
@@ -81,7 +81,7 @@ impl EditorChrome {
         header.pack_end(&save);
 
         let choose = gtk::Button::builder()
-            .label("Escolher PDF…")
+            .label(tr!("Escolher PDF…"))
             .halign(gtk::Align::Center)
             .action_name(empty.open_action)
             .build();
@@ -94,11 +94,11 @@ impl EditorChrome {
             .child(&choose)
             .build();
         let loading = adw::StatusPage::builder()
-            .title("Abrindo documento…")
+            .title(tr!("Abrindo documento…"))
             .child(&gtk::Spinner::builder().spinning(true).width_request(32).height_request(32).build())
             .build();
         let error_choose = gtk::Button::builder()
-            .label("Escolher outro PDF…")
+            .label(tr!("Escolher outro PDF…"))
             .halign(gtk::Align::Center)
             .action_name(empty.open_action)
             .build();
@@ -115,7 +115,7 @@ impl EditorChrome {
         toolbar.add_top_bar(&header);
         toolbar.set_content(Some(&stack));
         toolbar.add_bottom_bar(&action_bar);
-        let nav_page = adw::NavigationPage::with_tag(&toolbar, info.title, info.key);
+        let nav_page = adw::NavigationPage::with_tag(&toolbar, info.title(), info.key);
         nav_page.bind_property("can-pop", &back, "visible").invert_boolean().sync_create().build();
         // Esc e Alt+← antes do AdwNavigationView, que os consome mesmo quando a
         // página não pode sair sozinha.
@@ -170,7 +170,7 @@ impl EditorChrome {
     }
 
     pub fn set_saving(&self, saving: bool) {
-        self.save.set_label(if saving { "Salvando…" } else { "Salvar" });
+        self.save.set_label(if saving { tr!("Salvando…") } else { tr!("Salvar") });
         if saving {
             self.save.set_sensitive(false);
         }
@@ -214,7 +214,7 @@ impl<T> History<T> {
 pub fn confirm_discard(app: &AppState, title: &str, body: &str, keep_label: &str, then: impl Fn() + 'static) {
     let dialog = adw::AlertDialog::new(Some(title), Some(body));
     dialog.add_response("cancel", keep_label);
-    dialog.add_response("discard", "Descartar");
+    dialog.add_response("discard", tr!("Descartar"));
     dialog.set_response_appearance("discard", adw::ResponseAppearance::Destructive);
     dialog.set_default_response(Some("cancel"));
     dialog.set_close_response("cancel");
@@ -253,17 +253,17 @@ fn report_save(app: &AppState, task: &TaskRow, result: OpResult<Outcome>, done: 
     done(saved.is_some());
     match (result, saved) {
         (Ok(_), Some(path)) => {
-            task.finish(&format!("Concluído: {}", human::file_name(&path)), Some(path.clone()));
+            task.finish(&tr!("Concluído: {file}", file = human::file_name(&path)), Some(path.clone()));
             let toast = adw::Toast::builder()
-                .title(glib::markup_escape_text(&format!("Salvo como “{}”", human::file_name(&path))))
-                .button_label("Abrir")
+                .title(glib::markup_escape_text(&tr!("Salvo como “{file}”", file = human::file_name(&path))))
+                .button_label(tr!("Abrir"))
                 .timeout(6)
                 .build();
             let win = app.window.clone();
             toast.connect_button_clicked(move |_| widgets::open_file(&win, &path));
             app.toasts.add_toast(toast);
         }
-        (Ok(_), None) => task.finish("Nenhum arquivo criado", None),
+        (Ok(_), None) => task.finish(tr!("Nenhum arquivo criado"), None),
         (Err(e), _) => {
             task.finish(e.title(), None);
             show_error_dialog(&app.window, &e);
@@ -277,9 +277,9 @@ fn show_error_dialog(win: &adw::ApplicationWindow, e: &OpError) {
         let details = gtk::Label::builder().label(e.technical()).wrap(true).selectable(true).xalign(0.0).build();
         details.add_css_class("monospace");
         details.add_css_class("caption");
-        let expander = gtk::Expander::builder().label("Detalhes técnicos").child(&details).build();
+        let expander = gtk::Expander::builder().label(tr!("Detalhes técnicos")).child(&details).build();
         dialog.set_extra_child(Some(&expander));
     }
-    dialog.add_response("ok", "Fechar");
+    dialog.add_response("ok", tr!("Fechar"));
     dialog.present(Some(win));
 }

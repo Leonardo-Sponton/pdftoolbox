@@ -89,8 +89,8 @@ struct ActionBar {
 
 fn action_bar() -> ActionBar {
     let bar = gtk::ActionBar::new();
-    let prev = widgets::icon_button("go-previous-symbolic", "Página anterior (Page Up)");
-    let next = widgets::icon_button("go-next-symbolic", "Próxima página (Page Down)");
+    let prev = widgets::icon_button("go-previous-symbolic", tr!("Página anterior (Page Up)"));
+    let next = widgets::icon_button("go-next-symbolic", tr!("Próxima página (Page Down)"));
     let page_label = gtk::Label::new(None);
     page_label.add_css_class("numeric");
     let nav_box = gtk::Box::new(gtk::Orientation::Horizontal, 6);
@@ -98,9 +98,9 @@ fn action_bar() -> ActionBar {
     nav_box.append(&page_label);
     nav_box.append(&next);
     bar.set_center_widget(Some(&nav_box));
-    let undo = widgets::icon_button("edit-undo-symbolic", "Desfazer (Ctrl+Z)");
+    let undo = widgets::icon_button("edit-undo-symbolic", tr!("Desfazer (Ctrl+Z)"));
     bar.pack_end(&undo);
-    let zoom = ZoomControls::new("Afastar (Ctrl+−)", "Ajustar à área (Ctrl+0)", "Aproximar (Ctrl++)");
+    let zoom = ZoomControls::new(tr!("Afastar (Ctrl+−)"), tr!("Ajustar à área (Ctrl+0)"), tr!("Aproximar (Ctrl++)"));
     bar.pack_start(&zoom.widget);
     for (b, action) in [
         (&prev, "page.prev"),
@@ -118,10 +118,10 @@ fn action_bar() -> ActionBar {
 pub fn build(app: &Rc<AppState>, files: Vec<PathBuf>) -> adw::NavigationPage {
     let info = catalog::info(ToolId::Annotate);
     let canvas = gtk::DrawingArea::builder().hexpand(true).vexpand(true).focusable(true).can_focus(true).build();
-    canvas.update_property(&[gtk::accessible::Property::Label(
+    canvas.update_property(&[gtk::accessible::Property::Label(tr!(
         "Página do documento. Setas movem a anotação selecionada, Shift+setas movem mais, mais e menos mudam o \
-         tamanho, Delete remove, Tab passa para a próxima anotação, Page Up e Page Down trocam de página.",
-    )]);
+         tamanho, Delete remove, Tab passa para a próxima anotação, Page Up e Page Down trocam de página."
+    ))]);
     // Viewport própria: sem `scroll-to-focus`, focar a página (que é maior
     // que a vista com zoom) não rola para o canto dela.
     let viewport = gtk::Viewport::builder().child(&canvas).scroll_to_focus(false).build();
@@ -135,9 +135,11 @@ pub fn build(app: &Rc<AppState>, files: Vec<PathBuf>) -> adw::NavigationPage {
     let bar = action_bar();
     let empty = EmptyState {
         icon: info.icon,
-        title: "Escolha um PDF para anotar",
-        description: "Ou arraste o arquivo para esta janela. Você poderá escrever textos, destacar trechos e \
-                      colocar a imagem da sua assinatura.",
+        title: tr!("Escolha um PDF para anotar"),
+        description: tr!(
+            "Ou arraste o arquivo para esta janela. Você poderá escrever textos, destacar trechos e colocar a \
+             imagem da sua assinatura."
+        ),
         open_action: "page.open",
     };
     let (chrome, nav_page) = EditorChrome::new(info, &empty, &editor_box, bar.bar);
@@ -193,10 +195,10 @@ pub fn build(app: &Rc<AppState>, files: Vec<PathBuf>) -> adw::NavigationPage {
     add("undo", |a| a.undo());
     add("prev", |a| a.go_to(a.page.get().saturating_sub(1)));
     add("next", |a| a.go_to(a.page.get() + 1));
-    add("add-text", |a| a.add_text("Texto"));
+    add("add-text", |a| a.add_text(tr!("Texto")));
     add("add-date", |a| {
         let today = glib::DateTime::now_local().ok().and_then(|d| d.format("%d/%m/%Y").ok());
-        a.add_text(today.as_deref().unwrap_or("Data"));
+        a.add_text(today.as_deref().unwrap_or(tr!("Data")));
     });
     add("add-image", |a| a.pick_image());
     add("add-highlight", |a| a.add_shape(true));
@@ -305,14 +307,14 @@ impl Annotator {
             .await;
             match result {
                 Ok(sizes) if !sizes.is_empty() => a.start(path, sizes),
-                Ok(_) => a.chrome.show_error(&OpError::OutputInvalid("o documento não tem páginas".into())),
+                Ok(_) => a.chrome.show_error(&OpError::OutputInvalid(tr!("o documento não tem páginas").into())),
                 Err(e) => a.chrome.show_error(&e),
             }
         });
     }
 
     fn start(self: &Rc<Self>, path: PathBuf, sizes: Vec<(f32, f32)>) {
-        self.chrome.set_title(&format!("Anotar — {}", human::file_name(&path)));
+        self.chrome.set_title(&tr!("Anotar — {file}", file = human::file_name(&path)));
         self.dest_dir.replace(unlock::original(&path).parent().map(Path::to_path_buf));
         self.sizes.replace(sizes);
         self.input.replace(Some(path));
@@ -349,7 +351,7 @@ impl Annotator {
             self.selected.set(None);
             self.refresh_panel();
         }
-        self.page_label.set_text(&format!("Página {page} de {total}"));
+        self.page_label.set_text(&tr!("Página {page} de {total}", page, total));
         self.prev.set_sensitive(page > 1);
         self.next.set_sensitive(page < total);
         self.apply_zoom();
@@ -426,13 +428,14 @@ impl Annotator {
             return;
         }
         let n = self.items.borrow().len();
-        let body = if n == 1 {
-            "1 anotação ainda não foi salva. O PDF original não foi alterado.".to_string()
-        } else {
-            format!("{n} anotações ainda não foram salvas. O PDF original não foi alterado.")
-        };
+        let body = trn!(
+            n,
+            "{n} anotação ainda não foi salva. O PDF original não foi alterado.",
+            "{n} anotações ainda não foram salvas. O PDF original não foi alterado.",
+            n
+        );
         let weak = Rc::downgrade(self);
-        editor::confirm_discard(&app, "Descartar as anotações?", &body, "Continuar anotando", move || {
+        editor::confirm_discard(&app, tr!("Descartar as anotações?"), &body, tr!("Continuar anotando"), move || {
             if let Some(a) = weak.upgrade() {
                 then(&a);
             }
@@ -530,7 +533,7 @@ impl Annotator {
         self.refresh_panel();
         self.canvas.queue_draw();
         self.canvas.grab_focus();
-        self.toast("Anotação removida. Ctrl+Z desfaz.");
+        self.toast(tr!("Anotação removida. Ctrl+Z desfaz."));
     }
 
     fn select(self: &Rc<Self>, index: Option<usize>) {
@@ -567,7 +570,7 @@ impl Annotator {
             self.toast(&e.to_string());
             return;
         }
-        let title = format!("Anotar — {}", human::file_name(&input));
+        let title = tr!("Anotar — {file}", file = human::file_name(&input));
         let request = Request::Annotate { input, items: items.clone() };
         self.saving.set(true);
         self.chrome.set_saving(true);

@@ -14,6 +14,7 @@ use gtk::{gdk, glib};
 use pdftoolbox::catalog::{self, Accepts};
 use pdftoolbox::engines::{poppler, qpdf};
 use pdftoolbox::human;
+use pdftoolbox::i18n::{n_, tr};
 use pdftoolbox::jobs::CancelToken;
 use pdftoolbox::operations;
 use pdftoolbox::storage::JobDir;
@@ -149,8 +150,9 @@ pub struct FileFacts {
     pub pages: Option<u32>,
     /// Dimensões exibidas (imagens: pixels; PDFs: pontos da 1ª página).
     pub dims: Option<(f32, f32)>,
-    /// Problema que impede o uso do arquivo, já em linguagem do usuário.
-    pub problem: Option<String>,
+    /// Problema que impede o uso do arquivo, em linguagem do usuário (texto
+    /// do catálogo, traduzido ao exibir: as informações ficam em cache).
+    pub problem: Option<&'static str>,
     /// PDF que exige senha para abrir (só “Remover senha” o aceita).
     pub locked: bool,
     /// PDFs: páginas com texto selecionável e total (`None` se não deu para ler).
@@ -170,29 +172,29 @@ impl FileFacts {
         let size = self.size.map(human::size);
         if self.locked {
             return match size {
-                Some(s) => format!("🔒 Protegido por senha · {s}"),
-                None => "🔒 Protegido por senha".into(),
+                Some(s) => format!("🔒 {} · {s}", tr!("Protegido por senha")),
+                None => format!("🔒 {}", tr!("Protegido por senha")),
             };
         }
-        if let Some(problem) = &self.problem {
+        if let Some(problem) = self.problem {
             return match size {
-                Some(s) => format!("⚠ {problem} · {s}"),
-                None => format!("⚠ {problem}"),
+                Some(s) => format!("⚠ {} · {s}", tr(problem)),
+                None => format!("⚠ {}", tr(problem)),
             };
         }
         let mut parts = Vec::new();
         if is_pdf {
             if let Some(n) = self.pages {
-                parts.push(format!("{n} página{}", if n == 1 { "" } else { "s" }));
+                parts.push(trn!(n as usize, "{n} página", "{n} páginas", n));
             }
         } else if let Some((w, h)) = self.dims {
             parts.push(format!("{} × {} px", w as u32, h as u32));
         }
         parts.extend(size);
         match self.text_pages {
-            Some((0, total)) if total > 0 => parts.push("sem texto selecionável".into()),
+            Some((0, total)) if total > 0 => parts.push(tr!("sem texto selecionável").into()),
             Some((with, total)) if self.mostly_scanned() => {
-                parts.push(format!("texto selecionável em só {with} de {total} páginas"))
+                parts.push(tr!("texto selecionável em só {with} de {total} páginas", with, total))
             }
             _ => {}
         }
@@ -206,7 +208,7 @@ pub fn facts_blocking(path: &Path) -> FileFacts {
     match std::fs::metadata(path) {
         Ok(m) => facts.size = Some(m.len()),
         Err(_) => {
-            facts.problem = Some("Arquivo não encontrado ou sem permissão de leitura".into());
+            facts.problem = Some(n_("Arquivo não encontrado ou sem permissão de leitura"));
             return facts;
         }
     }
@@ -216,7 +218,7 @@ pub fn facts_blocking(path: &Path) -> FileFacts {
             Ok(n) => facts.pages = Some(n),
             Err(OpError::PasswordProtected(_)) => facts.locked = true,
             Err(OpError::MissingTool(_)) => {}
-            Err(_) => facts.problem = Some("Não parece ser um PDF válido".into()),
+            Err(_) => facts.problem = Some(n_("Não parece ser um PDF válido")),
         }
         if facts.problem.is_none() && !facts.locked {
             facts.dims = poppler::page_size(path, 1, &cancel).ok();
@@ -227,7 +229,7 @@ pub fn facts_blocking(path: &Path) -> FileFacts {
     } else {
         match pdfwriter::display_dimensions(path) {
             Ok((w, h)) => facts.dims = Some((w as f32, h as f32)),
-            Err(_) => facts.problem = Some("Imagem ilegível ou formato não suportado".into()),
+            Err(_) => facts.problem = Some(n_("Imagem ilegível ou formato não suportado")),
         }
     }
     facts
@@ -242,7 +244,10 @@ pub async fn facts(path: &Path) -> FileFacts {
 pub fn picture(path: &Path, max_w: i32, max_h: i32) -> PageThumb {
     use gtk::prelude::*;
     let thumb = PageThumb::new(max_w, max_h);
-    thumb.update_property(&[gtk::accessible::Property::Label(&format!("Miniatura de {}", human::file_name(path)))]);
+    thumb.update_property(&[gtk::accessible::Property::Label(&tr!(
+        "Miniatura de {file}",
+        file = human::file_name(path)
+    ))]);
     if let Some(t) = cached(path, 1) {
         thumb.set_texture(Some(&t));
         return thumb;
@@ -260,9 +265,9 @@ pub fn picture(path: &Path, max_w: i32, max_h: i32) -> PageThumb {
                 let kind = widgets::blocking(move || qpdf::encryption(&p, &CancelToken::new()).ok()).await;
                 if kind == Some(qpdf::Encryption::Password) {
                     thumb.add_css_class("miniatura-bloqueada");
-                    thumb.update_property(&[gtk::accessible::Property::Label(&format!(
-                        "{} está protegido por senha",
-                        human::file_name(&path)
+                    thumb.update_property(&[gtk::accessible::Property::Label(&tr!(
+                        "{file} está protegido por senha",
+                        file = human::file_name(&path)
                     ))]);
                 }
             }

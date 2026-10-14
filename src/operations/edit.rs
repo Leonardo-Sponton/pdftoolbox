@@ -47,6 +47,7 @@ fn apply_layer(
     inputs: &[PathBuf],
     spec: Option<&str>,
     suffix: &str,
+    // Progresso, já traduzido, com `{file}` para o nome do arquivo.
     action: &str,
     dest: &Destination,
     ctx: &JobCtx,
@@ -54,14 +55,14 @@ fn apply_layer(
 ) -> OpResult<Outcome> {
     let n = inputs.len();
     batch(inputs, |i, input, outcome| {
-        ctx.report(i as f64 / n as f64, &format!("{action} {}", stem(input)));
+        ctx.report(i as f64 / n as f64, &crate::i18n::fill(action, &[("file", &stem(input))]));
         let total = qpdf::page_count(input, &ctx.cancel)?;
         let chosen = chosen_pages(spec, total)?;
         let sizes = poppler::page_sizes(input, total, &ctx.cancel)?;
         let job = JobDir::new()?;
         let layer_pdf = job.file("camada.pdf");
         pdfwriter::overlay_pdf(&layer_pdf, &layer(&sizes, &chosen))
-            .map_err(|e| OpError::io("gravar a camada temporária", e))?;
+            .map_err(|e| OpError::io(tr!("gravar a camada temporária"), e))?;
         let tmp = job.file("carimbado.pdf");
         qpdf::overlay(input, &layer_pdf, &tmp, &ctx.cancel)?;
         verify_pdf(&tmp, total, ctx)?;
@@ -79,7 +80,7 @@ pub fn number_pages(
     dest: &Destination,
     ctx: &JobCtx,
 ) -> OpResult<Outcome> {
-    apply_layer(inputs, spec, "numerado", "Numerando", dest, ctx, |sizes, chosen| {
+    apply_layer(inputs, spec, "numerado", tr!("Numerando {file}"), dest, ctx, |sizes, chosen| {
         stamp::number_pages(sizes, chosen, style)
     })
 }
@@ -93,33 +94,39 @@ pub fn watermark(
 ) -> OpResult<Outcome> {
     let text = style.text.trim();
     if text.is_empty() {
-        return Err(OpError::InvalidRange("Digite o texto da marca d’água.".into()));
+        return Err(OpError::InvalidRange(tr!("Digite o texto da marca d’água.").into()));
     }
     let (_, missing) = stamp::encode(text);
     if !missing.is_empty() {
         return Err(OpError::InvalidRange(unsupported_chars(&missing)));
     }
-    apply_layer(inputs, spec, "marca d’água", "Aplicando marca d’água em", dest, ctx, |sizes, chosen| {
-        stamp::watermark(sizes, chosen, style)
-    })
+    apply_layer(
+        inputs,
+        spec,
+        "marca d’água",
+        tr!("Aplicando marca d’água em {file}"),
+        dest,
+        ctx,
+        |sizes, chosen| stamp::watermark(sizes, chosen, style),
+    )
 }
 
 /// Anotações e assinatura visual sobre um PDF.
 pub fn annotate(input: &Path, items: &[Annotation], dest: &Destination, ctx: &JobCtx) -> OpResult<Outcome> {
     let total = qpdf::page_count(input, &ctx.cancel)?;
     annotate::validate(items, total)?;
-    ctx.report(0.1, "Lendo o tamanho das páginas");
+    ctx.report(0.1, tr!("Lendo o tamanho das páginas"));
     let sizes = poppler::page_sizes(input, total, &ctx.cancel)?;
-    ctx.report(0.3, "Preparando imagens");
+    ctx.report(0.3, tr!("Preparando imagens"));
     let sources = annotate::image_sources(items);
     let images = annotate::load_images(&sources)?;
     ctx.cancel.check()?;
     let job = JobDir::new()?;
     let layer_pdf = job.file("camada.pdf");
     pdfwriter::overlay_pdf_with_images(&layer_pdf, &annotate::layer(items, &sizes, &sources), &images)
-        .map_err(|e| OpError::io("gravar a camada temporária", e))?;
+        .map_err(|e| OpError::io(tr!("gravar a camada temporária"), e))?;
     drop(images);
-    ctx.report(0.6, "Aplicando anotações");
+    ctx.report(0.6, tr!("Aplicando anotações"));
     let tmp = job.file("anotado.pdf");
     qpdf::overlay(input, &layer_pdf, &tmp, &ctx.cancel)?;
     verify_pdf(&tmp, total, ctx)?;
@@ -128,9 +135,9 @@ pub fn annotate(input: &Path, items: &[Annotation], dest: &Destination, ctx: &Jo
     outcome.push(storage::commit(&tmp, &dest.dir, &name)?);
     if items.iter().any(|a| matches!(a.kind, annotate::Kind::Image { .. })) {
         outcome.notes.push(
-            "A assinatura foi inserida como imagem: serve como assinatura visual, sem validade de assinatura \
-             digital."
-                .into(),
+            tr!("A assinatura foi inserida como imagem: serve como assinatura visual, sem validade de assinatura \
+                 digital.")
+            .into(),
         );
     }
     Ok(outcome)
@@ -139,10 +146,10 @@ pub fn annotate(input: &Path, items: &[Annotation], dest: &Destination, ctx: &Jo
 /// Mensagem para caracteres fora da codificação das fontes padrão.
 pub fn unsupported_chars(missing: &[char]) -> String {
     let list: Vec<String> = missing.iter().map(|c| format!("“{c}”")).collect();
-    format!(
-        "Estes caracteres não existem nas fontes padrão do PDF usadas nos textos: {}. \
+    tr!(
+        "Estes caracteres não existem nas fontes padrão do PDF usadas nos textos: {chars}. \
          Letras acentuadas do português funcionam; símbolos e outros alfabetos ainda não.",
-        list.join(" ")
+        chars = list.join(" ")
     )
 }
 
@@ -263,18 +270,18 @@ fn trailer_without_info(trailer: &Value, max_object: u64) -> Value {
 fn apply_update(input: &Path, update: &Value, job: &JobDir, out: &Path, ctx: &JobCtx) -> OpResult<()> {
     let json_path = job.file("atualizacao.json");
     let bytes = serde_json::to_vec(update)
-        .map_err(|e| OpError::OutputInvalid(format!("não foi possível montar a atualização: {e}")))?;
-    std::fs::write(&json_path, bytes).map_err(|e| OpError::io("gravar arquivo temporário", e))?;
+        .map_err(|e| OpError::OutputInvalid(tr!("não foi possível montar a atualização: {error}", error = e)))?;
+    std::fs::write(&json_path, bytes).map_err(|e| OpError::io(tr!("gravar arquivo temporário"), e))?;
     qpdf::update_from_json(input, &json_path, out, &ctx.cancel)
 }
 
 pub fn metadata(input: &Path, change: &MetadataChange, dest: &Destination, ctx: &JobCtx) -> OpResult<Outcome> {
     let total = qpdf::page_count(input, &ctx.cancel)?;
     if qpdf::encryption(input, &ctx.cancel)? != qpdf::Encryption::None {
-        return Err(OpError::InvalidRange(format!(
-            "“{}” tem restrições definidas pelo autor. Remova-as antes com “Remover senha”, usando a senha de \
-             permissões.",
-            crate::human::file_name(input)
+        return Err(OpError::InvalidRange(tr!(
+            "“{file}” tem restrições definidas pelo autor. Remova-as antes com “Remover senha”, usando a senha \
+             de permissões.",
+            file = crate::human::file_name(input)
         )));
     }
     let job = JobDir::new()?;
@@ -282,7 +289,7 @@ pub fn metadata(input: &Path, change: &MetadataChange, dest: &Destination, ctx: 
     let mut outcome = Outcome::default();
     let suffix = match change {
         MetadataChange::RemoveAll => {
-            ctx.report(0.3, "Removendo metadados");
+            ctx.report(0.3, tr!("Removendo metadados"));
             let stripped = job.file("sem-xmp.pdf");
             qpdf::strip_metadata(input, &stripped, &ctx.cancel)?;
             // O --remove-info do qpdf mantém a data de modificação; sem o
@@ -291,23 +298,23 @@ pub fn metadata(input: &Path, change: &MetadataChange, dest: &Destination, ctx: 
             apply_update(&stripped, &trailer_without_info(&trailer, max), &job, &tmp, ctx)?;
             let left = poppler::doc_info(&tmp, &ctx.cancel)?;
             if left != poppler::DocInfo::default() {
-                return Err(OpError::OutputInvalid("ainda restaram metadados no arquivo".into()));
+                return Err(OpError::OutputInvalid(tr!("ainda restaram metadados no arquivo").into()));
             }
             "sem metadados"
         }
         MetadataChange::Set(fields) => {
-            ctx.report(0.2, "Lendo metadados");
+            ctx.report(0.2, tr!("Lendo metadados"));
             let (trailer, max) = qpdf::trailer(input, &ctx.cancel)?;
             let current = match trailer.get("/Info").and_then(Value::as_str) {
                 Some(id) => qpdf::dictionary(input, id, &ctx.cancel)?,
                 None => None,
             };
             let update = info_update(&trailer, max, current.as_ref(), fields, &pdf_date_now());
-            ctx.report(0.5, "Gravando metadados");
+            ctx.report(0.5, tr!("Gravando metadados"));
             apply_update(input, &update, &job, &tmp, ctx)?;
             let got = poppler::doc_info(&tmp, &ctx.cancel)?;
             if got.title != fields.title.trim() || got.author != fields.author.trim() {
-                return Err(OpError::OutputInvalid("os metadados gravados não conferem com os informados".into()));
+                return Err(OpError::OutputInvalid(tr!("os metadados gravados não conferem com os informados").into()));
             }
             "metadados"
         }
@@ -316,7 +323,7 @@ pub fn metadata(input: &Path, change: &MetadataChange, dest: &Destination, ctx: 
     let name = output_name(dest, &format!("{} - {suffix}", stem(input)), "pdf");
     outcome.push(storage::commit(&tmp, &dest.dir, &name)?);
     if *change == MetadataChange::RemoveAll {
-        outcome.notes.push("Título, autor, assunto, palavras-chave, programas e datas foram removidos.".into());
+        outcome.notes.push(tr!("Título, autor, assunto, palavras-chave, programas e datas foram removidos.").into());
     }
     Ok(outcome)
 }

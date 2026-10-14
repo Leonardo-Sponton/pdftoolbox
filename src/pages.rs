@@ -3,8 +3,6 @@
 
 use crate::error::{OpError, OpResult};
 
-const EXAMPLE: &str = "Use, por exemplo: 1-3, 5, 8-";
-
 /// Interpreta cada item separado por vírgula (ou ponto e vírgula) como um grupo.
 /// Intervalos decrescentes (`5-3`) produzem páginas em ordem inversa.
 pub fn parse_groups(spec: &str, total: u32) -> OpResult<Vec<Vec<u32>>> {
@@ -46,9 +44,12 @@ pub fn parse_list(spec: &str, total: u32) -> OpResult<Vec<u32>> {
 
 fn parse_page(s: &str, item: &str) -> OpResult<u32> {
     match s.parse::<u32>() {
-        Ok(0) => Err(OpError::InvalidRange("A numeração de páginas começa em 1.".into())),
+        Ok(0) => Err(OpError::InvalidRange(tr!("A numeração de páginas começa em 1.").into())),
         Ok(n) => Ok(n),
-        Err(_) => Err(OpError::InvalidRange(format!("“{item}” não é uma seleção de páginas válida. {EXAMPLE}"))),
+        Err(_) => Err(OpError::InvalidRange(tr!(
+            "“{item}” não é uma seleção de páginas válida. Use, por exemplo: 1-3, 5, 8-",
+            item
+        ))),
     }
 }
 

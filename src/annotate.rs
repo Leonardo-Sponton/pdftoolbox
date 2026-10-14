@@ -91,19 +91,22 @@ pub fn text_box(text: &str, size: f32, bold: bool) -> (f32, f32) {
 /// representação nas fontes padrão e páginas inexistentes.
 pub fn validate(items: &[Annotation], total: u32) -> OpResult<()> {
     if items.is_empty() {
-        return Err(OpError::InvalidRange("Adicione pelo menos uma anotação.".into()));
+        return Err(OpError::InvalidRange(tr!("Adicione pelo menos uma anotação.").into()));
     }
     for item in items {
         if item.page == 0 || item.page > total {
-            return Err(OpError::InvalidRange(format!(
-                "Uma anotação está na página {}, mas o documento tem {total}.",
-                item.page
+            return Err(OpError::InvalidRange(trn!(
+                total as usize,
+                "Uma anotação está na página {page}, mas o documento tem {total} página.",
+                "Uma anotação está na página {page}, mas o documento tem {total} páginas.",
+                page = item.page,
+                total
             )));
         }
         match &item.kind {
             Kind::Text { text, .. } => {
                 if text.trim().is_empty() {
-                    return Err(OpError::InvalidRange("Há uma anotação de texto vazia.".into()));
+                    return Err(OpError::InvalidRange(tr!("Há uma anotação de texto vazia.").into()));
                 }
                 let (_, missing) = stamp::encode(text);
                 if !missing.is_empty() {
@@ -111,9 +114,9 @@ pub fn validate(items: &[Annotation], total: u32) -> OpResult<()> {
                 }
             }
             Kind::Image { path, .. } if !path.is_file() => {
-                return Err(OpError::InvalidRange(format!(
-                    "A imagem “{}” não foi encontrada.",
-                    crate::human::file_name(path)
+                return Err(OpError::InvalidRange(tr!(
+                    "A imagem “{file}” não foi encontrada.",
+                    file = crate::human::file_name(path)
                 )));
             }
             _ => {}

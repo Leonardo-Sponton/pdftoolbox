@@ -3,6 +3,10 @@
 //! Este crate não depende de GTK; a interface (em `main.rs` e `ui/`) apenas
 //! chama as operações daqui em uma thread de trabalho.
 
+// Primeiro: as macros `tr!` e `trn!` ficam visíveis nos módulos seguintes.
+#[macro_use]
+pub mod i18n;
+
 pub mod annotate;
 pub mod catalog;
 pub mod deskew;

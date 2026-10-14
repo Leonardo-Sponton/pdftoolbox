@@ -20,7 +20,7 @@ fn write_images(
 ) -> OpResult<()> {
     let n = images.len();
     pdfwriter::images_to_pdf(images, layout, tmp, &ctx.cancel, |done| {
-        ctx.report(base + span * done as f64 / n as f64, &format!("Imagem {done} de {n}"));
+        ctx.report(base + span * done as f64 / n as f64, &tr!("Imagem {done} de {n}", done, n));
     })?;
     qpdf::check(tmp, &ctx.cancel)?;
     verify_pdf(tmp, n as u32, ctx)
@@ -85,7 +85,17 @@ pub fn pdf_to_images(
             },
             |done| {
                 let fraction = (i as f64 + done as f64 / total as f64) / n;
-                ctx.report(fraction, &format!("{}: {done} de {total} páginas", stem(input)));
+                ctx.report(
+                    fraction,
+                    &trn!(
+                        total as usize,
+                        "{file}: {done} de {total} página",
+                        "{file}: {done} de {total} páginas",
+                        file = stem(input),
+                        done,
+                        total
+                    ),
+                );
             },
         )?;
         let dir = if total > 1 {
@@ -123,7 +133,7 @@ pub fn extract_text(
     let engine = ocr.map(|o| super::ocr::engine(o, ctx)).transpose()?;
     let mut used_ocr = false;
     let mut outcome = batch(inputs, |i, input, outcome| {
-        ctx.report(i as f64 / n as f64, &format!("Extraindo texto de {}", stem(input)));
+        ctx.report(i as f64 / n as f64, &tr!("Extraindo texto de {file}", file = stem(input)));
         qpdf::page_count(input, &ctx.cancel)?;
         let job = JobDir::new()?;
         let mut source = input.to_path_buf();
@@ -137,13 +147,13 @@ pub fn extract_text(
         }
         let tmp = job.file("texto.txt");
         poppler::extract_text(&source, &tmp, layout, &ctx.cancel)?;
-        let text = std::fs::read(&tmp).map_err(|e| OpError::io("ler o texto extraído", e))?;
+        let text = std::fs::read(&tmp).map_err(|e| OpError::io(tr!("ler o texto extraído"), e))?;
         // pdftotext separa páginas com form feed; sem nada além disso, não há texto.
         if text.iter().all(|b| b.is_ascii_whitespace() || *b == 0x0C) {
-            outcome.notes.push(format!(
-                "“{}” não tem texto selecionável — provavelmente é uma digitalização (imagem). \
+            outcome.notes.push(tr!(
+                "“{file}” não tem texto selecionável — provavelmente é uma digitalização (imagem). \
                  Nenhum arquivo foi criado; ligue “Reconhecer texto das páginas digitalizadas (OCR)”.",
-                crate::human::file_name(input)
+                file = crate::human::file_name(input)
             ));
             return Ok(());
         }
@@ -152,7 +162,7 @@ pub fn extract_text(
         Ok(())
     })?;
     if used_ocr && !outcome.outputs.is_empty() {
-        outcome.notes.push(super::ocr::CAVEAT.into());
+        outcome.notes.push(super::ocr::caveat().into());
     }
     Ok(outcome)
 }
@@ -168,13 +178,14 @@ pub fn office_to_pdf(inputs: &[PathBuf], dest: &Destination, ctx: &JobCtx) -> Op
     let mut outcome = batch(inputs, |i, input, outcome| {
         ctx.report(
             (i as f64 + 0.1) / n as f64,
-            &format!(
-                "Convertendo {} ({} de {n}) — a primeira conversão pode levar alguns segundos",
-                stem(input),
-                i + 1
+            &tr!(
+                "Convertendo {file} ({index} de {n}) — a primeira conversão pode levar alguns segundos",
+                file = stem(input),
+                index = i + 1,
+                n
             ),
         );
-        std::fs::File::open(input).map_err(|e| OpError::io_path("abrir", input, e))?;
+        std::fs::File::open(input).map_err(|e| OpError::io_path(tr!("abrir “{file}”"), input, e))?;
         let job = JobDir::new()?;
         let profile = job.subdir("perfil")?;
         let out_dir = job.subdir("saida")?;
@@ -182,15 +193,17 @@ pub fn office_to_pdf(inputs: &[PathBuf], dest: &Destination, ctx: &JobCtx) -> Op
         // entrada e não lida bem com alguns caracteres.
         let ext = input.extension().map(|e| e.to_string_lossy().to_lowercase()).unwrap_or_default();
         let source = job.file(&format!("documento.{ext}"));
-        std::fs::copy(input, &source).map_err(|e| OpError::io_path("ler", input, e))?;
+        std::fs::copy(input, &source).map_err(|e| OpError::io_path(tr!("ler “{file}”"), input, e))?;
         let (pdf, isolated) = crate::engines::libreoffice::to_pdf(&source, &out_dir, &profile, &ctx.cancel)?;
         isolated_all &= isolated;
         let pages = qpdf::page_count(&pdf, &ctx.cancel).map_err(|e| match e {
             OpError::Cancelled => e,
-            other => OpError::OutputInvalid(format!("o PDF gerado não pôde ser lido ({})", other.technical())),
+            other => {
+                OpError::OutputInvalid(tr!("o PDF gerado não pôde ser lido ({detail})", detail = other.technical()))
+            }
         })?;
         if pages == 0 {
-            return Err(OpError::OutputInvalid("o PDF gerado não tem páginas".into()));
+            return Err(OpError::OutputInvalid(tr!("o PDF gerado não tem páginas").into()));
         }
         let name = batch_output_name(dest, n, &stem(input), "pdf");
         outcome.push(storage::commit(&pdf, &dest.dir, &name)?);
@@ -198,9 +211,10 @@ pub fn office_to_pdf(inputs: &[PathBuf], dest: &Destination, ctx: &JobCtx) -> Op
     })?;
     if !isolated_all && !outcome.outputs.is_empty() {
         outcome.notes.push(
-            "Este sistema não permite isolar a conversão da rede (namespaces sem privilégios desativados). \
-             O LibreOffice não costuma acessar a internet ao converter, mas o isolamento não pôde ser garantido."
-                .into(),
+            tr!("Este sistema não permite isolar a conversão da rede (namespaces sem privilégios desativados). \
+                 O LibreOffice não costuma acessar a internet ao converter, mas o isolamento não pôde ser \
+                 garantido.")
+            .into(),
         );
     }
     Ok(outcome)

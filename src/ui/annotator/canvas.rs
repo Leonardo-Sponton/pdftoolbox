@@ -375,7 +375,7 @@ impl Annotator {
         } else {
             cr.set_source_rgb(0.45, 0.45, 0.45);
             cr.set_font_size(14.0);
-            let label = "Carregando página…";
+            let label = tr!("Carregando página…");
             if let Ok(ext) = cr.text_extents(label) {
                 cr.move_to(ox + (pw_px - ext.width()) / 2.0, oy + ph_px / 2.0);
                 let _ = cr.show_text(label);

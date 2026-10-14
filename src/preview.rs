@@ -3,7 +3,6 @@
 //! interface usa o plano para marcar as miniaturas e escrever o resumo.
 
 use crate::error::{OpError, OpResult};
-use crate::human;
 use crate::operations::SplitMode;
 use crate::pages;
 use crate::stamp::{self, NumberFormat};
@@ -69,9 +68,9 @@ impl Plan {
 
 pub fn angle_text(angle: i32) -> &'static str {
     match angle.rem_euclid(360) {
-        90 => "90° no sentido horário",
+        90 => tr!("90° no sentido horário"),
         180 => "180°",
-        270 => "90° no sentido anti-horário",
+        270 => tr!("90° no sentido anti-horário"),
         _ => "0°",
     }
 }
@@ -101,13 +100,18 @@ pub fn rotate(spec: &str, angle: i32, total: u32) -> OpResult<Plan> {
     let n = selected.len();
     let how = angle_text(angle);
     let summary = if total == 1 {
-        format!("A única página será girada {how}.")
+        tr!("A única página será girada {how}.", how)
     } else if n as u32 == total {
-        format!("Todas as {total} páginas serão giradas {how}.")
-    } else if n == 1 {
-        format!("1 de {total} páginas será girada {how}; as demais ficam como estão.")
+        tr!("Todas as {total} páginas serão giradas {how}.", total, how)
     } else {
-        format!("{n} de {total} páginas serão giradas {how}; as demais ficam como estão.")
+        trn!(
+            n,
+            "{n} de {total} páginas será girada {how}; as demais ficam como estão.",
+            "{n} de {total} páginas serão giradas {how}; as demais ficam como estão.",
+            n,
+            total,
+            how
+        )
     };
     Ok(Plan { marks, summary })
 }
@@ -131,12 +135,22 @@ pub fn numbers(spec: &str, format: NumberFormat, first_number: u32, total: u32) 
     }
     let n = chosen.len();
     let summary = match (n as u32 == total, n) {
-        (true, 1) => format!("A única página receberá o número {first_number}."),
-        (true, _) => format!("Todas as {total} páginas serão numeradas, de {first_number} a {last}."),
-        (false, 1) => format!("1 de {total} páginas receberá o número {first_number}; as demais ficam sem número."),
-        (false, _) => {
-            format!("{n} de {total} páginas serão numeradas, de {first_number} a {last}; as demais ficam sem número.")
+        (true, 1) => tr!("A única página receberá o número {first_number}.", first_number),
+        (true, _) => {
+            tr!("Todas as {total} páginas serão numeradas, de {first_number} a {last}.", total, first_number, last)
         }
+        (false, 1) => tr!(
+            "1 de {total} páginas receberá o número {first_number}; as demais ficam sem número.",
+            total,
+            first_number
+        ),
+        (false, _) => tr!(
+            "{n} de {total} páginas serão numeradas, de {first_number} a {last}; as demais ficam sem número.",
+            n,
+            total,
+            first_number,
+            last
+        ),
     };
     Ok(Plan { marks, summary })
 }
@@ -146,14 +160,19 @@ pub fn watermark(spec: &str, total: u32) -> OpResult<Plan> {
     let chosen = dedup(&stamped(spec, total)?);
     let mut marks = vec![PageMark::normal(); total as usize];
     for &p in &chosen {
-        marks[p as usize - 1] = PageMark { kind: MarkKind::Selected, badge: Some("Marca".into()), rotation: 0 };
+        marks[p as usize - 1] = PageMark { kind: MarkKind::Selected, badge: Some(tr!("Marca").into()), rotation: 0 };
     }
     let n = chosen.len();
     let summary = match (n as u32 == total, n) {
-        (true, 1) => "A única página receberá a marca d’água.".to_string(),
-        (true, _) => format!("Todas as {total} páginas receberão a marca d’água."),
-        (false, 1) => format!("1 de {total} páginas receberá a marca d’água."),
-        (false, _) => format!("{n} de {total} páginas receberão a marca d’água."),
+        (true, 1) => tr!("A única página receberá a marca d’água.").to_string(),
+        (true, _) => tr!("Todas as {total} páginas receberão a marca d’água.", total),
+        (false, _) => trn!(
+            n,
+            "{n} de {total} páginas receberá a marca d’água.",
+            "{n} de {total} páginas receberão a marca d’água.",
+            n,
+            total
+        ),
     };
     Ok(Plan { marks, summary })
 }
@@ -172,25 +191,22 @@ pub fn extract(spec: &str, separate: bool, total: u32) -> OpResult<Plan> {
             continue;
         }
         // A posição só é informativa quando a ordem difere da original.
-        let badge = (!in_order).then(|| pos.iter().map(|n| format!("{n}º")).collect::<Vec<_>>().join(", "));
+        let badge = (!in_order).then(|| pos.iter().map(|n| tr!("{n}º", n)).collect::<Vec<_>>().join(", "));
         marks[i] = PageMark { kind: MarkKind::Selected, badge, rotation: 0 };
     }
     let n = list.len();
     let summary = if separate && n == 1 {
-        "Será criado 1 PDF com a página escolhida.".to_string()
+        tr!("Será criado 1 PDF com a página escolhida.").to_string()
     } else if separate {
-        format!("Serão criados {n} PDFs, um por página.")
+        tr!("Serão criados {n} PDFs, um por página.", n)
     } else if in_order {
-        format!(
-            "{} {} para um novo PDF.",
-            human::plural(n, "página", "páginas"),
-            if n == 1 { "será copiada" } else { "serão copiadas" }
-        )
+        trn!(n, "{n} página será copiada para um novo PDF.", "{n} páginas serão copiadas para um novo PDF.", n)
     } else {
-        format!(
-            "{} {} para um novo PDF, na ordem digitada (veja os números sobre as páginas).",
-            human::plural(n, "página", "páginas"),
-            if n == 1 { "será copiada" } else { "serão copiadas" }
+        trn!(
+            n,
+            "{n} página será copiada para um novo PDF, na ordem digitada (veja os números sobre as páginas).",
+            "{n} páginas serão copiadas para um novo PDF, na ordem digitada (veja os números sobre as páginas).",
+            n
         )
     };
     Ok(Plan { marks, summary })
@@ -201,18 +217,18 @@ pub fn remove(spec: &str, total: u32) -> OpResult<Plan> {
     let removed = pages::parse_list(spec, total)?;
     let keep = pages::complement(&removed, total);
     if keep.is_empty() {
-        return Err(OpError::InvalidRange("Não é possível remover todas as páginas do documento.".into()));
+        return Err(OpError::InvalidRange(tr!("Não é possível remover todas as páginas do documento.").into()));
     }
     let mut marks = vec![PageMark::normal(); total as usize];
     for &p in &removed {
-        marks[p as usize - 1] = PageMark { kind: MarkKind::Removed, badge: Some("Removida".into()), rotation: 0 };
+        marks[p as usize - 1] = PageMark { kind: MarkKind::Removed, badge: Some(tr!("Removida").into()), rotation: 0 };
     }
     let gone = total as usize - keep.len();
+    let left = keep.len();
     let summary = format!(
-        "{} {}; o novo PDF terá {}.",
-        human::plural(gone, "página", "páginas"),
-        if gone == 1 { "será removida" } else { "serão removidas" },
-        human::plural(keep.len(), "página", "páginas")
+        "{} {}",
+        trn!(gone, "{gone} página será removida;", "{gone} páginas serão removidas;", gone),
+        trn!(left, "o novo PDF terá {left} página.", "o novo PDF terá {left} páginas.", left)
     );
     Ok(Plan { marks, summary })
 }
@@ -235,25 +251,27 @@ pub fn split(mode: &SplitMode, total: u32) -> OpResult<Plan> {
     let marks: Vec<PageMark> = member
         .iter()
         .map(|gs| match gs.as_slice() {
-            [] => PageMark { kind: MarkKind::Excluded, badge: Some("Fora".into()), rotation: 0 },
+            [] => PageMark { kind: MarkKind::Excluded, badge: Some(tr!("Fora").into()), rotation: 0 },
             [g, ..] => PageMark {
                 kind: MarkKind::Group(*g),
-                badge: Some(format!("Arq. {}", gs.iter().map(|g| (g + 1).to_string()).collect::<Vec<_>>().join(", "))),
+                badge: Some(tr!(
+                    "Arq. {files}",
+                    files = gs.iter().map(|g| (g + 1).to_string()).collect::<Vec<_>>().join(", ")
+                )),
                 rotation: 0,
             },
         })
         .collect();
     let excluded = marks.iter().filter(|m| m.kind == MarkKind::Excluded).count();
-    let mut summary = format!("Serão criados {}.", human::plural(groups.len(), "arquivo", "arquivos"));
-    if groups.len() == 1 {
-        summary = "Será criado 1 arquivo.".into();
-    }
+    let count = groups.len();
+    let mut summary = trn!(count, "Será criado {count} arquivo.", "Serão criados {count} arquivos.", count);
     if excluded > 0 {
-        summary.push_str(&format!(
-            " {} não {} em nenhum intervalo e {} de fora.",
-            human::plural(excluded, "página", "páginas"),
-            if excluded == 1 { "está" } else { "estão" },
-            if excluded == 1 { "fica" } else { "ficam" }
+        summary.push(' ');
+        summary.push_str(&trn!(
+            excluded,
+            "{excluded} página não está em nenhum intervalo e fica de fora.",
+            "{excluded} páginas não estão em nenhum intervalo e ficam de fora.",
+            excluded
         ));
     }
     Ok(Plan { marks, summary })

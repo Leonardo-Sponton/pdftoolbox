@@ -72,9 +72,9 @@ fn spec_text(row: &adw::EntryRow) -> Option<String> {
     Some(row.text().trim().to_string()).filter(|s| !s.is_empty())
 }
 
-/// Texto obrigatório: sem ele, o erro pede “Informe {what}.”
-fn required_text(row: &adw::EntryRow, what: &str) -> OpResult<String> {
-    spec_text(row).ok_or_else(|| OpError::InvalidRange(format!("Informe {what}.")))
+/// Texto obrigatório: sem ele, o erro é `missing` (já traduzido).
+fn required_text(row: &adw::EntryRow, missing: &str) -> OpResult<String> {
+    spec_text(row).ok_or_else(|| OpError::InvalidRange(missing.to_string()))
 }
 
 fn number_style(
@@ -117,10 +117,6 @@ fn split_mode(mode: &adw::ComboRow, ranges: &adw::EntryRow, every: &adw::SpinRow
     })
 }
 
-fn pages_text(n: usize) -> String {
-    if n == 1 { "1 página".to_string() } else { format!("{n} páginas") }
-}
-
 impl Options {
     /// Plano da ferramenta para um documento de `total` páginas. `None`
     /// quando ainda não há o que mostrar (nenhuma página digitada).
@@ -147,9 +143,9 @@ impl Options {
     /// Dica enquanto o campo de páginas está vazio (o botão fica desligado).
     pub fn idle_hint(&self) -> Option<&'static str> {
         match self {
-            Options::Extract { .. } => Some("Digite as páginas a extrair ou clique nelas abaixo."),
-            Options::Remove { .. } => Some("Digite as páginas a remover ou clique nelas abaixo."),
-            Options::Split { .. } => Some("Digite os intervalos; cada um vira um arquivo, com uma cor."),
+            Options::Extract { .. } => Some(tr!("Digite as páginas a extrair ou clique nelas abaixo.")),
+            Options::Remove { .. } => Some(tr!("Digite as páginas a remover ou clique nelas abaixo.")),
+            Options::Split { .. } => Some(tr!("Digite os intervalos; cada um vira um arquivo, com uma cor.")),
             _ => None,
         }
     }
@@ -163,7 +159,7 @@ impl Options {
                 let t = text.text();
                 if t.trim().is_empty() {
                     text.add_css_class("error");
-                    return Err(FormIssue::Incomplete("Digite o texto da marca d’água.".into()));
+                    return Err(FormIssue::Incomplete(tr!("Digite o texto da marca d’água.").into()));
                 }
                 let (_, missing) = stamp::encode(t.trim());
                 if !missing.is_empty() {
@@ -181,28 +177,28 @@ impl Options {
                     return Err(FormIssue::Incomplete(String::new()));
                 }
                 if confirm.is_empty() {
-                    return Err(FormIssue::Incomplete("Repita a senha para confirmar.".into()));
+                    return Err(FormIssue::Incomplete(tr!("Repita a senha para confirmar.").into()));
                 }
                 if pw != confirm {
                     p.confirm.add_css_class("error");
-                    return Err(FormIssue::Invalid("As senhas não coincidem.".into()));
+                    return Err(FormIssue::Invalid(tr!("As senhas não coincidem.").into()));
                 }
                 if p.restrict.enables_expansion() {
                     let owner = p.owner.text();
                     if owner.is_empty() {
                         return Err(FormIssue::Incomplete(
-                            "Digite a senha de permissões (ou desligue as restrições).".into(),
+                            tr!("Digite a senha de permissões (ou desligue as restrições).").into(),
                         ));
                     }
                     if owner == pw {
                         p.owner.add_css_class("error");
                         return Err(FormIssue::Invalid(
-                            "A senha de permissões precisa ser diferente da senha para abrir.".into(),
+                            tr!("A senha de permissões precisa ser diferente da senha para abrir.").into(),
                         ));
                     }
                 }
                 if pw.chars().count() < 8 {
-                    return Ok(Some("Senha curta: com menos de 8 caracteres ela é fácil de adivinhar.".into()));
+                    return Ok(Some(tr!("Senha curta: com menos de 8 caracteres ela é fácil de adivinhar.").into()));
                 }
                 Ok(None)
             }
@@ -211,19 +207,19 @@ impl Options {
                 Err(FormIssue::Incomplete(if languages.switches.borrow().is_empty() {
                     String::new()
                 } else {
-                    "Escolha pelo menos um idioma do documento.".into()
+                    tr!("Escolha pelo menos um idioma do documento.").into()
                 }))
             }
             Options::Ocr { skip, .. } => match ocr_counts {
                 Some((with_text, total)) if with_text == total && skip.is_active() => Err(FormIssue::Incomplete(
-                    "Não há páginas para reconhecer. Se o texto existente estiver errado ou ilegível, desligue \
-                     “Pular páginas que já têm texto”."
-                        .into(),
+                    tr!("Não há páginas para reconhecer. Se o texto existente estiver errado ou ilegível, desligue \
+                         “Pular páginas que já têm texto”.")
+                    .into(),
                 )),
                 Some((with_text, _)) if with_text > 0 && !skip.is_active() => Ok(Some(
-                    "Páginas que já têm texto vão ganhar uma segunda cópia dele, e a busca pode encontrar tudo em \
-                     dobro."
-                        .into(),
+                    tr!("Páginas que já têm texto vão ganhar uma segunda cópia dele, e a busca pode encontrar tudo \
+                         em dobro.")
+                    .into(),
                 )),
                 _ => Ok(None),
             },
@@ -260,15 +256,15 @@ impl Options {
             Options::Split { mode, ranges, every } => Request::Split {
                 input: first,
                 mode: split_mode(mode, ranges, every)
-                    .ok_or_else(|| OpError::InvalidRange("Informe os intervalos de páginas.".into()))?,
+                    .ok_or_else(|| OpError::InvalidRange(tr!("Informe os intervalos de páginas.").into()))?,
             },
             Options::Extract { spec, separate } => Request::Extract {
                 input: first,
-                spec: required_text(spec, "as páginas a extrair")?,
+                spec: required_text(spec, tr!("Informe as páginas a extrair."))?,
                 separate: separate.is_active(),
             },
             Options::Remove { spec } => {
-                Request::Remove { input: first, spec: required_text(spec, "as páginas a remover")? }
+                Request::Remove { input: first, spec: required_text(spec, tr!("Informe as páginas a remover."))? }
             }
             Options::Rotate { angle, spec } => {
                 Request::Rotate { inputs: files, spec: spec_text(spec), angle: angle_of(angle.selected()) }
@@ -310,7 +306,7 @@ impl Options {
             },
             Options::Protect(p) => {
                 if p.password.text() != p.confirm.text() {
-                    return Err(OpError::InvalidRange("As senhas não coincidem.".into()));
+                    return Err(OpError::InvalidRange(tr!("As senhas não coincidem.").into()));
                 }
                 Request::Protect {
                     inputs: files,
@@ -350,33 +346,43 @@ impl Options {
     /// Rótulo do botão que diz exatamente o que vai acontecer. `base` é o
     /// verbo da ferramenta; `files`, quantos arquivos há na lista.
     pub fn action_label(&self, base: &str, files: usize, plan: Option<&Plan>) -> String {
-        let many = |verb: &str, noun: &str| format!("{verb} {files} {noun}");
-        match self {
-            Options::Metadata(m) if m.remove_all.is_active() => return "Apagar metadados".into(),
-            Options::Protect(_) if files > 1 => return many("Proteger", "arquivos"),
-            Options::Unlock { .. } if files > 1 => return many("Remover senha de", "arquivos"),
-            Options::Text { .. } if files > 1 => return many("Extrair texto de", "arquivos"),
-            Options::Office if files > 1 => return many("Converter", "documentos"),
-            Options::Ocr { .. } if files > 1 => return many("Reconhecer texto de", "arquivos"),
-            Options::Numbers { .. } if files > 1 => return many("Numerar", "arquivos"),
-            Options::Watermark { .. } if files > 1 => return many("Aplicar marca d’água em", "arquivos"),
-            _ => {}
+        let many = match self {
+            Options::Metadata(m) if m.remove_all.is_active() => return tr!("Apagar metadados").into(),
+            _ if files <= 1 => None,
+            Options::Protect(_) => Some(tr!("Proteger {files} arquivos", files)),
+            Options::Unlock { .. } => Some(tr!("Remover senha de {files} arquivos", files)),
+            Options::Text { .. } => Some(tr!("Extrair texto de {files} arquivos", files)),
+            Options::Office => Some(tr!("Converter {files} documentos", files)),
+            Options::Ocr { .. } => Some(tr!("Reconhecer texto de {files} arquivos", files)),
+            Options::Numbers { .. } => Some(tr!("Numerar {files} arquivos", files)),
+            Options::Watermark { .. } => Some(tr!("Aplicar marca d’água em {files} arquivos", files)),
+            _ => None,
+        };
+        if let Some(label) = many {
+            return label;
         }
         let Some(plan) = plan else { return base.to_string() };
         let count = |kind: MarkKind| plan.marks.iter().filter(|m| m.kind == kind).count();
-        let all_or = |n: usize, all: &str, some: &str| {
-            if n == plan.marks.len() { all.to_string() } else { format!("{some} {}", pages_text(n)) }
-        };
+        let selected = count(MarkKind::Selected);
+        let all = selected == plan.marks.len();
         match self {
-            Options::Rotate { .. } if files > 1 => format!("Girar {files} arquivos"),
-            Options::Rotate { .. } => all_or(count(MarkKind::Selected), "Girar todas as páginas", "Girar"),
+            Options::Rotate { .. } if files > 1 => tr!("Girar {files} arquivos", files),
+            Options::Rotate { .. } if all => tr!("Girar todas as páginas").into(),
+            Options::Rotate { .. } => trn!(selected, "Girar {n} página", "Girar {n} páginas", n = selected),
             Options::Extract { spec, .. } => {
                 let n = pages::parse_list(&spec.text(), plan.marks.len() as u32).map_or(0, |l| l.len());
-                format!("Extrair {}", pages_text(n))
+                trn!(n, "Extrair {n} página", "Extrair {n} páginas", n)
             }
-            Options::Remove { .. } => format!("Remover {}", pages_text(count(MarkKind::Removed))),
-            Options::Numbers { .. } => all_or(count(MarkKind::Selected), "Numerar todas as páginas", "Numerar"),
-            Options::Watermark { .. } => all_or(count(MarkKind::Selected), "Aplicar em todas as páginas", "Aplicar em"),
+            Options::Remove { .. } => {
+                let n = count(MarkKind::Removed);
+                trn!(n, "Remover {n} página", "Remover {n} páginas", n)
+            }
+            Options::Numbers { .. } if all => tr!("Numerar todas as páginas").into(),
+            Options::Numbers { .. } => trn!(selected, "Numerar {n} página", "Numerar {n} páginas", n = selected),
+            Options::Watermark { .. } if all => tr!("Aplicar em todas as páginas").into(),
+            Options::Watermark { .. } => {
+                trn!(selected, "Aplicar em {n} página", "Aplicar em {n} páginas", n = selected)
+            }
             Options::Split { .. } => {
                 // Intervalos sobrepostos: o maior índice de grupo é a contagem de arquivos.
                 let n = plan
@@ -388,7 +394,7 @@ impl Options {
                     })
                     .max()
                     .unwrap_or(0);
-                if n == 1 { "Dividir em 1 arquivo".into() } else { format!("Dividir em {n} arquivos") }
+                trn!(n, "Dividir em {n} arquivo", "Dividir em {n} arquivos", n)
             }
             _ => base.to_string(),
         }
@@ -402,12 +408,12 @@ impl Options {
                 let style = number_style(position, format, first, size);
                 let (n, last) = (style.first_number, style.first_number + chosen.saturating_sub(1));
                 let label = stamp::number_text(style.format, n, last);
-                let caption = format!("Página {page}, a primeira numerada: recebe “{label}”.");
+                let caption = tr!("Página {page}, a primeira numerada: recebe “{label}”.", page, label);
                 Some((caption, Box::new(move |size| stamp::number_page(size, n, last, &style))))
             }
             Options::Watermark { text, color, opacity, scale, diagonal, .. } => {
                 let style = watermark_style(text, color, opacity, scale, diagonal);
-                let caption = format!("Página {page}, a primeira com a marca d’água.");
+                let caption = tr!("Página {page}, a primeira com a marca d’água.", page);
                 Some((caption, Box::new(move |size| stamp::watermark(&[size], &[1], &style).remove(0))))
             }
             _ => None,

@@ -7,19 +7,20 @@ use adw::prelude::*;
 use gtk::glib;
 
 use pdftoolbox::human;
+use pdftoolbox::i18n::{n_, tr};
 use pdftoolbox::operations::{self, Annotation, AnnotationKind as Kind};
 use pdftoolbox::pdfwriter::MM;
 
 use super::Annotator;
 
 pub(super) const COLORS: [(&str, (f32, f32, f32)); 7] = [
-    ("Preto", (0.0, 0.0, 0.0)),
-    ("Azul", (0.05, 0.2, 0.65)),
-    ("Vermelho", (0.8, 0.1, 0.1)),
-    ("Verde", (0.1, 0.5, 0.2)),
-    ("Amarelo", (1.0, 0.88, 0.2)),
-    ("Rosa", (1.0, 0.6, 0.8)),
-    ("Azul-claro", (0.55, 0.85, 1.0)),
+    (n_("Preto"), (0.0, 0.0, 0.0)),
+    (n_("Azul"), (0.05, 0.2, 0.65)),
+    (n_("Vermelho"), (0.8, 0.1, 0.1)),
+    (n_("Verde"), (0.1, 0.5, 0.2)),
+    (n_("Amarelo"), (1.0, 0.88, 0.2)),
+    (n_("Rosa"), (1.0, 0.6, 0.8)),
+    (n_("Azul-claro"), (0.55, 0.85, 1.0)),
 ];
 pub(super) const BLACK: usize = 0;
 pub(super) const RED: usize = 2;
@@ -81,27 +82,35 @@ fn describe(item: &Annotation) -> String {
             let first = text.lines().next().unwrap_or("").trim();
             let short: String = first.chars().take(28).collect();
             let more = if first.chars().count() > 28 || text.trim().lines().count() > 1 { "…" } else { "" };
-            format!("Texto “{short}{more}”")
+            tr!("Texto “{text}”", text = format!("{short}{more}"))
         }
-        Kind::Image { path, .. } => format!("Imagem {}", human::file_name(path)),
-        Kind::Highlight { .. } => "Destaque".into(),
-        Kind::Frame { .. } => "Moldura".into(),
+        Kind::Image { path, .. } => tr!("Imagem {file}", file = human::file_name(path)),
+        Kind::Highlight { .. } => tr!("Destaque").into(),
+        Kind::Frame { .. } => tr!("Moldura").into(),
     };
-    let wheres = if item.all_pages { "todas as páginas".to_string() } else { format!("pág. {}", item.page) };
+    let wheres =
+        if item.all_pages { tr!("todas as páginas").to_string() } else { tr!("pág. {page}", page = item.page) };
     format!("{what} · {wheres}")
 }
 
 /// Grupo “Adicionar”: os botões ativam as ações `page.add-*`.
 fn add_group() -> adw::PreferencesGroup {
-    let text = add_button("pdftoolbox-anotar-symbolic", "Texto", "Escrever um texto na página", "page.add-text");
-    let date = add_button("x-office-calendar-symbolic", "Data de hoje", "Escrever a data de hoje", "page.add-date");
-    let highlight =
-        add_button("pdftoolbox-marca-texto-symbolic", "Destaque", "Marca-texto sobre um trecho", "page.add-highlight");
-    let frame = add_button("pdftoolbox-moldura-symbolic", "Moldura", "Retângulo com contorno", "page.add-frame");
+    let text =
+        add_button("pdftoolbox-anotar-symbolic", tr!("Texto"), tr!("Escrever um texto na página"), "page.add-text");
+    let date =
+        add_button("x-office-calendar-symbolic", tr!("Data de hoje"), tr!("Escrever a data de hoje"), "page.add-date");
+    let highlight = add_button(
+        "pdftoolbox-marca-texto-symbolic",
+        tr!("Destaque"),
+        tr!("Marca-texto sobre um trecho"),
+        "page.add-highlight",
+    );
+    let frame =
+        add_button("pdftoolbox-moldura-symbolic", tr!("Moldura"), tr!("Retângulo com contorno"), "page.add-frame");
     let image = add_button(
         "pdftoolbox-imagens-para-pdf-symbolic",
-        "Assinatura ou imagem…",
-        "Inserir uma imagem, como a foto ou digitalização da sua assinatura",
+        tr!("Assinatura ou imagem…"),
+        tr!("Inserir uma imagem, como a foto ou digitalização da sua assinatura"),
         "page.add-image",
     );
     // Grade simples: num GtkFlowBox o foco do teclado para na célula, e
@@ -112,8 +121,8 @@ fn add_group() -> adw::PreferencesGroup {
     }
     grid.attach(&image, 0, 2, 2, 1);
     let group = adw::PreferencesGroup::builder()
-        .title("Adicionar")
-        .description("Entra no centro da página atual; depois arraste para posicionar.")
+        .title(tr!("Adicionar"))
+        .description(tr!("Entra no centro da página atual; depois arraste para posicionar."))
         .build();
     group.add(&grid);
     group
@@ -129,38 +138,38 @@ fn props() -> Props {
         .accepts_tab(false)
         .height_request(72)
         .build();
-    text.update_property(&[gtk::accessible::Property::Label("Texto da anotação")]);
+    text.update_property(&[gtk::accessible::Property::Label(tr!("Texto da anotação"))]);
     let warning = gtk::Label::builder().wrap(true).xalign(0.0).visible(false).margin_bottom(12).build();
     warning.add_css_class("error");
     warning.add_css_class("caption");
     let delete = gtk::Button::builder()
-        .child(&adw::ButtonContent::builder().icon_name("user-trash-symbolic").label("Remover anotação").build())
-        .tooltip_text("Remover a anotação selecionada (Delete)")
+        .child(&adw::ButtonContent::builder().icon_name("user-trash-symbolic").label(tr!("Remover anotação")).build())
+        .tooltip_text(tr!("Remover a anotação selecionada (Delete)"))
         .halign(gtk::Align::Start)
         .margin_top(12)
         .build();
     delete.add_css_class("destructive-action");
     Props {
-        group: adw::PreferencesGroup::builder().title("Anotação selecionada").visible(false).build(),
+        group: adw::PreferencesGroup::builder().title(tr!("Anotação selecionada")).visible(false).build(),
         text_box: gtk::Frame::builder().child(&text).margin_bottom(12).build(),
         text,
         warning,
-        font_size: spin("Tamanho da letra", "Em pontos", (4.0, 144.0, 1.0), 0),
-        bold: adw::SwitchRow::builder().title("Negrito").build(),
+        font_size: spin(tr!("Tamanho da letra"), tr!("Em pontos"), (4.0, 144.0, 1.0), 0),
+        bold: adw::SwitchRow::builder().title(tr!("Negrito")).build(),
         color: adw::ComboRow::builder()
-            .title("Cor")
-            .model(&gtk::StringList::new(&COLORS.map(|(name, _)| name)))
+            .title(tr!("Cor"))
+            .model(&gtk::StringList::new(&COLORS.map(|(name, _)| tr(name))))
             .build(),
-        width: spin("Largura", "Em milímetros", (2.0, 600.0, 1.0), 0),
-        height: spin("Altura", "Em milímetros", (2.0, 600.0, 1.0), 0),
-        line: spin("Espessura do contorno", "Em pontos", (0.5, 12.0, 0.5), 1),
+        width: spin(tr!("Largura"), tr!("Em milímetros"), (2.0, 600.0, 1.0), 0),
+        height: spin(tr!("Altura"), tr!("Em milímetros"), (2.0, 600.0, 1.0), 0),
+        line: spin(tr!("Espessura do contorno"), tr!("Em pontos"), (0.5, 12.0, 0.5), 1),
         remove_white: adw::SwitchRow::builder()
-            .title("Remover fundo branco")
-            .subtitle("Deixa transparente o papel em volta da assinatura")
+            .title(tr!("Remover fundo branco"))
+            .subtitle(tr!("Deixa transparente o papel em volta da assinatura"))
             .build(),
         all_pages: adw::SwitchRow::builder()
-            .title("Repetir em todas as páginas")
-            .subtitle("Útil para rubricas e carimbos")
+            .title(tr!("Repetir em todas as páginas"))
+            .subtitle(tr!("Útil para rubricas e carimbos"))
             .build(),
         delete,
     }
@@ -191,7 +200,7 @@ pub(super) fn build() -> Panel {
 
     let list = gtk::ListBox::builder().selection_mode(gtk::SelectionMode::None).build();
     list.add_css_class("boxed-list");
-    let list_group = adw::PreferencesGroup::builder().title("Anotações").visible(false).build();
+    let list_group = adw::PreferencesGroup::builder().title(tr!("Anotações")).visible(false).build();
     list_group.add(&list);
 
     let side = gtk::Box::builder()
@@ -203,16 +212,16 @@ pub(super) fn build() -> Panel {
         .margin_end(18)
         .build();
     side.append(&add_group());
-    side.append(&caption(
+    side.append(&caption(tr!(
         "Clique numa anotação para selecioná-la. Arraste para mover; arraste o canto inferior direito para \
-         mudar o tamanho.",
-    ));
+         mudar o tamanho."
+    )));
     side.append(&props.group);
     side.append(&list_group);
-    side.append(&caption(
+    side.append(&caption(tr!(
         "A assinatura entra como imagem: é uma assinatura visual, sem a validade jurídica de uma assinatura \
-         digital com certificado.",
-    ));
+         digital com certificado."
+    )));
     let widget = gtk::ScrolledWindow::builder()
         .hscrollbar_policy(gtk::PolicyType::Never)
         .child(&side)
@@ -374,10 +383,10 @@ impl Annotator {
         p.line.set_visible(matches!(item.kind, Kind::Frame { .. }));
         p.remove_white.set_visible(is_image);
         p.group.set_title(match item.kind {
-            Kind::Text { .. } => "Texto selecionado",
-            Kind::Image { .. } => "Imagem selecionada",
-            Kind::Highlight { .. } => "Destaque selecionado",
-            Kind::Frame { .. } => "Moldura selecionada",
+            Kind::Text { .. } => tr!("Texto selecionado"),
+            Kind::Image { .. } => tr!("Imagem selecionada"),
+            Kind::Highlight { .. } => tr!("Destaque selecionado"),
+            Kind::Frame { .. } => tr!("Moldura selecionada"),
         });
         match &item.kind {
             Kind::Text { text, size, bold, color } => {
@@ -412,7 +421,7 @@ impl Annotator {
         let msg = text.and_then(|t| {
             let (_, missing) = pdftoolbox::stamp::encode(&t);
             if t.trim().is_empty() {
-                Some("Digite o texto da anotação.".to_string())
+                Some(tr!("Digite o texto da anotação.").to_string())
             } else if !missing.is_empty() {
                 Some(operations::unsupported_chars(&missing))
             } else {
@@ -430,7 +439,7 @@ impl Annotator {
         }
         let items = self.items.borrow().clone();
         self.list_group.set_visible(!items.is_empty());
-        self.list_group.set_title(&format!("Anotações ({})", items.len()));
+        self.list_group.set_title(&tr!("Anotações ({n})", n = items.len()));
         for (i, item) in items.iter().enumerate() {
             let row =
                 adw::ActionRow::builder().title(glib::markup_escape_text(&describe(item))).activatable(true).build();

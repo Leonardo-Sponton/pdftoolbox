@@ -100,6 +100,7 @@ gerado foi conferido.
 | Tela inicial com soltar arquivos, recentes, categorias, busca | Implementado e testado | UI verificada |
 | Abrir pelo gerenciador de arquivos (`%U`) | Implementado e testado | Via linha de comando; .desktop validado |
 | Tema claro/escuro/sistema | Implementado e testado | UI verificada; paleta do MyNotes no escuro e variante clara |
+| Idioma: português e inglês (seguir o sistema ou fixar) | Implementado e testado | Detecção pelo locale (LANGUAGE, LC_ALL, LC_MESSAGES, LANG, /etc/locale.conf; não suportado → português), escolha no menu gravada em `idioma=` e aplicada na hora ao menu, à tela inicial, aos diálogos e mensagens; ferramentas já abertas mudam ao serem reabertas. Testes: resolução e detecção com ambiente simulado, persistência sem apagar outras preferências, catálogo conferido contra o código, saídas idênticas nos dois idiomas. UI verificada nas 18 ferramentas, diálogos e janela de 360 px nos dois idiomas (instância isolada, textos lidos por AT-SPI) |
 | Cartões dos arquivos escolhidos (1ª página, páginas, tamanho, problema) | Implementado e testado | UI verificada com PDFs, imagens e mistura |
 | Sugestão de ferramenta e motivo das indisponíveis | Implementado e testado | UI verificada |
 | Pré-visualização de Girar/Extrair/Remover/Dividir | Implementado e testado | Plano com testes automatizados; UI verificada; resultado de Girar e Remover conferido com `pdfinfo`/`qpdf` |

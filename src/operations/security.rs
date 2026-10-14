@@ -26,7 +26,7 @@ pub struct Restrictions {
 
 fn line_ok(password: &Secret) -> OpResult<()> {
     if password.expose().contains(['\n', '\r']) {
-        return Err(OpError::InvalidRange("A senha não pode conter quebras de linha.".into()));
+        return Err(OpError::InvalidRange(tr!("A senha não pode conter quebras de linha.").into()));
     }
     Ok(())
 }
@@ -39,30 +39,30 @@ pub fn protect(
     ctx: &JobCtx,
 ) -> OpResult<Outcome> {
     if password.is_empty() {
-        return Err(OpError::InvalidRange("Digite a senha de abertura.".into()));
+        return Err(OpError::InvalidRange(tr!("Digite a senha de abertura.").into()));
     }
     line_ok(password)?;
     if let Some(r) = restrictions {
         line_ok(&r.owner)?;
         if r.owner.is_empty() || r.owner == *password {
             return Err(OpError::InvalidRange(
-                "A senha de permissões precisa ser diferente da senha de abertura; senão as restrições \
-                 não protegem nada."
-                    .into(),
+                tr!("A senha de permissões precisa ser diferente da senha de abertura; senão as restrições \
+                     não protegem nada.")
+                .into(),
             ));
         }
     }
     let n = inputs.len();
     batch(inputs, |i, input, outcome| {
-        ctx.report(i as f64 / n as f64, &format!("Protegendo {}", stem(input)));
+        ctx.report(i as f64 / n as f64, &tr!("Protegendo {file}", file = stem(input)));
         match qpdf::encryption(input, &ctx.cancel)? {
             Encryption::None => {}
             Encryption::Password => return Err(OpError::PasswordProtected(input.to_path_buf())),
             Encryption::RestrictionsOnly => {
-                return Err(OpError::InvalidRange(format!(
-                    "“{}” já tem restrições definidas pelo autor. Remova-as antes com “Remover senha”, \
+                return Err(OpError::InvalidRange(tr!(
+                    "“{file}” já tem restrições definidas pelo autor. Remova-as antes com “Remover senha”, \
                      usando a senha de permissões.",
-                    crate::human::file_name(input)
+                    file = crate::human::file_name(input)
                 )));
             }
         }
@@ -91,17 +91,23 @@ pub fn protect(
         storage::write_private(&args_file, args.expose().as_bytes())?;
         let tmp = job.file("protegido.pdf");
         qpdf::encrypt(input, &args_file, &tmp, &ctx.cancel)?;
-        std::fs::remove_file(&args_file).map_err(|e| OpError::io("apagar arquivo temporário", e))?;
+        std::fs::remove_file(&args_file).map_err(|e| OpError::io(tr!("apagar arquivo temporário"), e))?;
 
         // Verificação: exige senha, abre com ela e tem as mesmas páginas.
         if qpdf::encryption(&tmp, &ctx.cancel)? != Encryption::Password {
-            return Err(OpError::OutputInvalid("o arquivo gerado não ficou protegido".into()));
+            return Err(OpError::OutputInvalid(tr!("o arquivo gerado não ficou protegido").into()));
         }
         let pw_file = job.file("senha");
         storage::write_private(&pw_file, password.expose().as_bytes())?;
         let pages = qpdf::page_count_with_password(&tmp, &pw_file, &ctx.cancel)?;
         if pages != total {
-            return Err(OpError::OutputInvalid(format!("esperava {total} página(s), mas o arquivo tem {pages}")));
+            return Err(OpError::OutputInvalid(trn!(
+                total as usize,
+                "esperava {expected_pages} página, mas o arquivo tem {got}",
+                "esperava {expected_pages} páginas, mas o arquivo tem {got}",
+                expected_pages = total,
+                got = pages
+            )));
         }
         let base = format!("{} - protegido", stem(input));
         let name = batch_output_name(dest, n, &base, "pdf");
@@ -114,7 +120,7 @@ pub fn unlock(inputs: &[PathBuf], password: &Secret, dest: &Destination, ctx: &J
     line_ok(password)?;
     let n = inputs.len();
     batch(inputs, |i, input, outcome| {
-        ctx.report(i as f64 / n as f64, &format!("Desbloqueando {}", stem(input)));
+        ctx.report(i as f64 / n as f64, &tr!("Desbloqueando {file}", file = stem(input)));
         let kind = qpdf::encryption(input, &ctx.cancel)?;
         if kind == Encryption::None {
             return Err(OpError::NotEncrypted(input.to_path_buf()));
@@ -139,7 +145,7 @@ pub fn unlock(inputs: &[PathBuf], password: &Secret, dest: &Destination, ctx: &J
         let tmp = job.file("desbloqueado.pdf");
         qpdf::decrypt(input, &pw_file, &tmp, &ctx.cancel)?;
         if qpdf::encryption(&tmp, &ctx.cancel)? != Encryption::None {
-            return Err(OpError::OutputInvalid("o arquivo gerado ainda está criptografado".into()));
+            return Err(OpError::OutputInvalid(tr!("o arquivo gerado ainda está criptografado").into()));
         }
         verify_pdf(&tmp, total, ctx)?;
         let base = format!("{} - sem senha", stem(input));
@@ -181,11 +187,17 @@ pub fn unlocked_copy(input: &Path, password: &Secret, cancel: &CancelToken) -> O
         let path = dir.path().join(name);
         qpdf::decrypt(input, &pw_file, &path, cancel)?;
         if qpdf::encryption(&path, cancel)? != Encryption::None {
-            return Err(OpError::OutputInvalid("a cópia desbloqueada ainda está criptografada".into()));
+            return Err(OpError::OutputInvalid(tr!("a cópia desbloqueada ainda está criptografada").into()));
         }
         let pages = qpdf::page_count(&path, cancel)?;
         if pages != total {
-            return Err(OpError::OutputInvalid(format!("esperava {total} página(s), mas a cópia tem {pages}")));
+            return Err(OpError::OutputInvalid(trn!(
+                total as usize,
+                "esperava {expected_pages} página, mas a cópia tem {got}",
+                "esperava {expected_pages} páginas, mas a cópia tem {got}",
+                expected_pages = total,
+                got = pages
+            )));
         }
         Ok(path)
     });

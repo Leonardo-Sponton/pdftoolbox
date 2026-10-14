@@ -11,27 +11,27 @@ use pdftoolbox::operations::{CompressLevel, Estimate, Outcome};
 /// Verbo do botão principal de cada ferramenta.
 pub fn run_label(id: ToolId) -> &'static str {
     match id {
-        ToolId::Merge => "Mesclar",
-        ToolId::Split => "Dividir",
-        ToolId::Extract => "Extrair",
-        ToolId::Remove => "Remover páginas",
-        ToolId::Rotate => "Girar",
-        ToolId::ImagesToPdf | ToolId::PdfToImages => "Converter",
-        ToolId::Compress => "Comprimir",
-        ToolId::Organize | ToolId::Annotate => "Salvar",
-        ToolId::NumberPages => "Numerar",
-        ToolId::Watermark => "Aplicar marca d’água",
-        ToolId::Metadata => "Salvar metadados",
-        ToolId::Protect => "Proteger",
-        ToolId::Unlock => "Remover senha",
-        ToolId::PdfToText => "Extrair texto",
-        ToolId::OfficeToPdf => "Converter",
-        ToolId::Ocr => "Reconhecer texto",
+        ToolId::Merge => tr!("Mesclar"),
+        ToolId::Split => tr!("Dividir"),
+        ToolId::Extract => tr!("Extrair"),
+        ToolId::Remove => tr!("Remover páginas"),
+        ToolId::Rotate => tr!("Girar"),
+        ToolId::ImagesToPdf | ToolId::PdfToImages => tr!("Converter"),
+        ToolId::Compress => tr!("Comprimir"),
+        ToolId::Organize | ToolId::Annotate => tr!("Salvar"),
+        ToolId::NumberPages => tr!("Numerar"),
+        ToolId::Watermark => tr!("Aplicar marca d’água"),
+        ToolId::Metadata => tr!("Salvar metadados"),
+        ToolId::Protect => tr!("Proteger"),
+        ToolId::Unlock => tr!("Remover senha"),
+        ToolId::PdfToText => tr!("Extrair texto"),
+        ToolId::OfficeToPdf => tr!("Converter"),
+        ToolId::Ocr => tr!("Reconhecer texto"),
     }
 }
 
-/// “2026-10-14T09:59:35-03” → “14/10/2026, 09:59”. Formatos inesperados
-/// são mostrados como vieram.
+/// “2026-10-14T09:59:35-03” → “14/10/2026, 09:59” (em inglês,
+/// “2026-10-14, 09:59”). Formatos inesperados são mostrados como vieram.
 pub fn friendly_date(iso: &str) -> String {
     let b = iso.as_bytes();
     let digits = |r: std::ops::Range<usize>| b.get(r.clone()).is_some_and(|s| s.iter().all(u8::is_ascii_digit));
@@ -43,7 +43,13 @@ pub fn friendly_date(iso: &str) -> String {
         && digits(11..13)
         && digits(14..16)
     {
-        format!("{}/{}/{}, {}", &iso[8..10], &iso[5..7], &iso[0..4], &iso[11..16])
+        tr!(
+            "{day}/{month}/{year}, {time}",
+            day = &iso[8..10],
+            month = &iso[5..7],
+            year = &iso[0..4],
+            time = &iso[11..16]
+        )
     } else {
         iso.to_string()
     }
@@ -53,69 +59,72 @@ pub fn friendly_date(iso: &str) -> String {
 pub fn compress_explanation(level: CompressLevel) -> String {
     let base = match level {
         CompressLevel::Lossless => {
-            "Reorganiza a estrutura do arquivo sem alterar imagens nem texto. A qualidade é idêntica; \
-             a economia costuma ser pequena em PDFs já otimizados."
+            tr!("Reorganiza a estrutura do arquivo sem alterar imagens nem texto. A qualidade é idêntica; \
+             a economia costuma ser pequena em PDFs já otimizados.")
         }
         CompressLevel::Recommended => {
-            "Reduz as imagens para 150 ppp e as recomprime em JPEG. Bom para tela e e-mail; há perda leve \
-             de qualidade nas imagens. O texto continua pesquisável."
+            tr!("Reduz as imagens para 150 ppp e as recomprime em JPEG. Bom para tela e e-mail; há perda leve \
+             de qualidade nas imagens. O texto continua pesquisável.")
         }
         CompressLevel::Strong => {
-            "Reduz as imagens para 96 ppp. Gera o menor arquivo, com perda visível ao ampliar ou imprimir."
+            tr!("Reduz as imagens para 96 ppp. Gera o menor arquivo, com perda visível ao ampliar ou imprimir.")
         }
         CompressLevel::Custom(_) => {
-            "Reduz as imagens para a resolução escolhida abaixo e as recomprime em JPEG. Imagens que já \
-             estão abaixo dela não são ampliadas. O texto continua pesquisável."
+            tr!("Reduz as imagens para a resolução escolhida abaixo e as recomprime em JPEG. Imagens que já \
+             estão abaixo dela não são ampliadas. O texto continua pesquisável.")
         }
     };
-    let mut text = base.to_string();
+    let mut parts = vec![base];
     if level != CompressLevel::Lossless {
-        text.push_str(
-            " O documento é reescrito pelo Ghostscript: confira o resultado se ele tiver formulários, links ou anexos.",
-        );
+        parts.push(tr!(
+            "O documento é reescrito pelo Ghostscript: confira o resultado se ele tiver formulários, links ou anexos."
+        ));
         if Tool::Ghostscript.find().is_none() {
-            text.push_str(" ⚠ O Ghostscript não está instalado; este nível não está disponível.");
+            parts.push(tr!("⚠ O Ghostscript não está instalado; este nível não está disponível."));
         }
     }
-    text
+    parts.join(" ")
 }
 
 /// Texto da linha “Tamanho estimado” para os arquivos da lista.
 pub fn estimate_text(results: &[(&Path, &Result<Estimate, String>)]) -> String {
     let ok: Vec<&Estimate> = results.iter().filter_map(|(_, r)| r.as_ref().ok()).collect();
     if let [(path, Err(e))] = results {
-        return format!("Não foi possível estimar “{}” ({e}).", human::file_name(path));
+        return tr!("Não foi possível estimar “{file}” ({error}).", file = human::file_name(path), error = e);
     }
     if ok.is_empty() {
-        return "Não foi possível estimar o resultado.".into();
+        return tr!("Não foi possível estimar o resultado.").into();
     }
     let original: u64 = ok.iter().map(|e| e.original).sum();
     let estimated: u64 = ok.iter().map(|e| e.estimated).sum();
     let exact = ok.iter().all(|e| e.exact);
     let total = Estimate { original, estimated, exact };
     let approx = if exact { "" } else { "≈ " };
-    let mut text = if results.len() == 1 {
-        format!("{} → {approx}{}", human::size(original), human::size(estimated))
-    } else {
-        format!("{} arquivos: {} → {approx}{}", ok.len(), human::size(original), human::size(estimated))
-    };
+    let sizes = format!("{} → {approx}{}", human::size(original), human::size(estimated));
+    let mut text = if results.len() == 1 { sizes } else { tr!("{n} arquivos: {sizes}", n = ok.len(), sizes) };
     if total.worthwhile() {
         text.push_str(&format!(" (−{:.0}%)", total.saving() * 100.0));
     } else if results.len() == 1 {
-        text.push_str(". Quase nenhuma economia: nenhum arquivo novo seria criado.");
+        text.push_str(tr!(". Quase nenhuma economia: nenhum arquivo novo seria criado."));
     } else {
-        text.push_str(". Quase nenhuma economia: os arquivos que não diminuírem não serão gravados.");
+        text.push_str(tr!(". Quase nenhuma economia: os arquivos que não diminuírem não serão gravados."));
     }
     if results.len() == 1 && total.worthwhile() {
         text.push_str(if exact {
-            ". Calculado com o documento inteiro."
+            tr!(". Calculado com o documento inteiro.")
         } else {
-            ". Estimado com uma amostra das páginas."
+            tr!(". Estimado com uma amostra das páginas.")
         });
     }
     let failed = results.len() - ok.len();
     if failed > 0 {
-        text.push_str(&format!(" Sem estimativa para {failed} arquivo(s)."));
+        text.push(' ');
+        text.push_str(&trn!(
+            failed,
+            "Sem estimativa para {n} arquivo.",
+            "Sem estimativa para {n} arquivos.",
+            n = failed
+        ));
     }
     text
 }
@@ -125,43 +134,58 @@ pub fn estimate_text(results: &[(&Path, &Result<Estimate, String>)]) -> String {
 pub fn ocr_summary(with_text: u32, total: u32, skip: bool) -> String {
     if !skip && with_text > 0 {
         return match (with_text, total) {
-            (1, 1) => "A página será reconhecida, embora já tenha texto selecionável.".into(),
+            (1, 1) => tr!("A página será reconhecida, embora já tenha texto selecionável.").into(),
             (w, n) if w == n => {
-                format!("As {n} páginas serão reconhecidas, embora todas já tenham texto selecionável.")
+                tr!("As {n} páginas serão reconhecidas, embora todas já tenham texto selecionável.", n)
             }
-            (1, n) => format!("As {n} páginas serão reconhecidas, inclusive 1 que já tem texto selecionável."),
-            (w, n) => format!("As {n} páginas serão reconhecidas, inclusive {w} que já têm texto selecionável."),
+            (w, n) => trn!(
+                w as usize,
+                "As {n} páginas serão reconhecidas, inclusive {w} que já tem texto selecionável.",
+                "As {n} páginas serão reconhecidas, inclusive {w} que já têm texto selecionável.",
+                n,
+                w
+            ),
         };
     }
     match (total - with_text, total) {
-        (0, 1) => "A página já tem texto selecionável.".into(),
-        (0, n) => format!("Todas as {n} páginas já têm texto selecionável."),
-        (1, 1) => "A página não tem texto selecionável e será reconhecida.".into(),
-        (w, n) if w == n => format!("Nenhuma das {n} páginas tem texto selecionável: todas serão reconhecidas."),
-        (1, n) => format!("1 de {n} páginas não tem texto selecionável e será reconhecida."),
-        (w, n) => format!("{w} de {n} páginas não têm texto selecionável e serão reconhecidas."),
+        (0, 1) => tr!("A página já tem texto selecionável.").into(),
+        (0, n) => tr!("Todas as {n} páginas já têm texto selecionável.", n),
+        (1, 1) => tr!("A página não tem texto selecionável e será reconhecida.").into(),
+        (w, n) if w == n => tr!("Nenhuma das {n} páginas tem texto selecionável: todas serão reconhecidas.", n),
+        (w, n) => trn!(
+            w as usize,
+            "{w} de {n} páginas não tem texto selecionável e será reconhecida.",
+            "{w} de {n} páginas não têm texto selecionável e serão reconhecidas.",
+            w,
+            n
+        ),
     }
 }
 
 /// Resumo da tarefa na lista de tarefas.
 pub fn outcome_summary(outcome: &Outcome) -> String {
     let mut s = match outcome.outputs.as_slice() {
-        [] => "Nenhum arquivo criado".to_string(),
-        [one] => format!("Concluído: {}", human::file_name(&one.path)),
-        many => format!("Concluído: {} arquivos", many.len()),
+        [] => tr!("Nenhum arquivo criado").to_string(),
+        [one] => tr!("Concluído: {file}", file = human::file_name(&one.path)),
+        many => tr!("Concluído: {n} arquivos", n = many.len()),
     };
-    if !outcome.failures.is_empty() {
-        s.push_str(&format!(" · {} falha(s)", outcome.failures.len()));
+    let failures = outcome.failures.len();
+    if failures > 0 {
+        s.push_str(" · ");
+        s.push_str(&trn!(failures, "{n} falha", "{n} falhas", n = failures));
     }
     if outcome.cancelled {
-        s.push_str(" · cancelado");
+        s.push_str(" · ");
+        s.push_str(tr!("cancelado"));
     }
     s
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{friendly_date, ocr_summary};
+    use pdftoolbox::i18n::{Language, with_language};
+
+    use super::{friendly_date, ocr_summary, outcome_summary, run_label};
 
     #[test]
     fn ocr_summary_agrees_in_number() {
@@ -190,5 +214,23 @@ mod tests {
         assert_eq!(friendly_date("2026-10-14T09:59:35Z"), "14/10/2026, 09:59");
         assert_eq!(friendly_date("ontem"), "ontem");
         assert_eq!(friendly_date(""), "");
+    }
+
+    #[test]
+    fn texts_in_english_agree_in_number_and_use_unambiguous_dates() {
+        with_language(Language::English, || {
+            assert_eq!(ocr_summary(2, 3, true), "1 of 3 pages has no selectable text and will be recognized.");
+            assert_eq!(ocr_summary(1, 3, true), "2 of 3 pages have no selectable text and will be recognized.");
+            assert_eq!(
+                ocr_summary(1, 5, false),
+                "All 5 pages will be recognized, including 1 that already has selectable text."
+            );
+            assert_eq!(friendly_date("2026-10-14T09:59:35-03"), "2026-10-14, 09:59");
+            assert_eq!(run_label(pdftoolbox::catalog::ToolId::Merge), "Merge");
+            let mut outcome = pdftoolbox::operations::Outcome::default();
+            assert_eq!(outcome_summary(&outcome), "No file created");
+            outcome.cancelled = true;
+            assert_eq!(outcome_summary(&outcome), "No file created · cancelled");
+        });
     }
 }

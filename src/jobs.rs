@@ -123,7 +123,7 @@ where
                     let _ = progress_tx.send_blocking(JobEvent::Progress(f, text.to_string()));
                 });
                 catch_unwind(AssertUnwindSafe(|| work(&ctx))).unwrap_or_else(|_| {
-                    Err(OpError::OutputInvalid("falha interna inesperada durante o processamento".into()))
+                    Err(OpError::OutputInvalid(tr!("falha interna inesperada durante o processamento").into()))
                 })
             }
         };
@@ -131,7 +131,7 @@ where
     });
     // Sem thread (limite de processos do sistema): a tarefa termina com o erro.
     if let Err(e) = spawned {
-        let _ = tx_spawn_error.send_blocking(JobEvent::Finished(Err(OpError::io("iniciar a tarefa", e))));
+        let _ = tx_spawn_error.send_blocking(JobEvent::Finished(Err(OpError::io(tr!("iniciar a tarefa"), e))));
     }
     JobHandle { cancel, events: rx }
 }

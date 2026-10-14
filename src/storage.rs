@@ -78,9 +78,9 @@ impl JobDir {
             .recursive(true)
             .mode(0o700)
             .create(root)
-            .map_err(|e| OpError::io("criar a pasta temporária", e))?;
+            .map_err(|e| OpError::io(tr!("criar a pasta temporária"), e))?;
         let path = root.join(unique_token());
-        fs::DirBuilder::new().mode(0o700).create(&path).map_err(|e| OpError::io("criar a pasta temporária", e))?;
+        fs::DirBuilder::new().mode(0o700).create(&path).map_err(|e| OpError::io(tr!("criar a pasta temporária"), e))?;
         Ok(JobDir { path })
     }
 
@@ -94,7 +94,7 @@ impl JobDir {
 
     pub fn subdir(&self, name: &str) -> OpResult<PathBuf> {
         let p = self.path.join(name);
-        fs::create_dir(&p).map_err(|e| OpError::io("criar a pasta temporária", e))?;
+        fs::create_dir(&p).map_err(|e| OpError::io(tr!("criar a pasta temporária"), e))?;
         Ok(p)
     }
 }
@@ -153,8 +153,8 @@ pub fn write_private(path: &Path, data: &[u8]) -> OpResult<()> {
         .create_new(true)
         .mode(0o600)
         .open(path)
-        .map_err(|e| OpError::io("criar arquivo temporário", e))?;
-    f.write_all(data).map_err(|e| OpError::io("gravar arquivo temporário", e))
+        .map_err(|e| OpError::io(tr!("criar arquivo temporário"), e))?;
+    f.write_all(data).map_err(|e| OpError::io(tr!("gravar arquivo temporário"), e))
 }
 
 /// Torna um nome digitado pelo usuário seguro como nome de arquivo e garante a extensão.
@@ -197,16 +197,16 @@ fn numbered(name: &str, n: u32) -> String {
 
 /// Verifica se é possível criar arquivos em `dir`.
 pub fn check_writable(dir: &Path) -> OpResult<()> {
-    let meta = fs::metadata(dir).map_err(|e| OpError::io_path("acessar a pasta de destino", dir, e))?;
+    let meta = fs::metadata(dir).map_err(|e| OpError::io_path(tr!("acessar a pasta de destino “{file}”"), dir, e))?;
     if !meta.is_dir() {
         return Err(OpError::io_path(
-            "usar a pasta de destino",
+            tr!("usar a pasta de destino “{file}”"),
             dir,
             io::Error::new(io::ErrorKind::NotADirectory, "não é uma pasta"),
         ));
     }
     let probe = dir.join(format!(".pdftoolbox-teste-{}", unique_token()));
-    fs::File::create(&probe).map_err(|e| OpError::io_path("gravar na pasta", dir, e))?;
+    fs::File::create(&probe).map_err(|e| OpError::io_path(tr!("gravar na pasta “{file}”"), dir, e))?;
     let _ = fs::remove_file(probe);
     Ok(())
 }
@@ -222,7 +222,7 @@ pub fn commit(tmp: &Path, dir: &Path, name: &str) -> OpResult<PathBuf> {
 }
 
 fn commit_inner(tmp: &Path, part: &Path, dir: &Path, name: &str) -> OpResult<PathBuf> {
-    let write_err = |e| OpError::io_path("gravar o resultado em", dir, e);
+    let write_err = |e| OpError::io_path(tr!("gravar o resultado em “{file}”"), dir, e);
     if fs::rename(tmp, part).is_err() {
         // Sistemas de arquivos diferentes: copiar.
         fs::copy(tmp, part).map_err(write_err)?;
@@ -275,7 +275,7 @@ pub fn create_unique_dir(dir: &Path, name: &str) -> OpResult<PathBuf> {
         match fs::create_dir(&target) {
             Ok(()) => return Ok(target),
             Err(e) if e.kind() == io::ErrorKind::AlreadyExists => continue,
-            Err(e) => return Err(OpError::io_path("criar a pasta", &target, e)),
+            Err(e) => return Err(OpError::io_path(tr!("criar a pasta “{file}”"), &target, e)),
         }
     }
     unreachable!()

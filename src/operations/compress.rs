@@ -44,7 +44,7 @@ impl CompressLevel {
 }
 
 fn file_size(path: &Path) -> OpResult<u64> {
-    Ok(std::fs::metadata(path).map_err(|e| OpError::io_path("ler", path, e))?.len())
+    Ok(std::fs::metadata(path).map_err(|e| OpError::io_path(tr!("ler “{file}”"), path, e))?.len())
 }
 
 /// Aplica `level` a `input`, gravando em `out` (dentro de `job`).
@@ -137,23 +137,28 @@ pub fn compress(inputs: &[PathBuf], level: CompressLevel, dest: &Destination, ct
     let n = inputs.len();
     batch(inputs, |i, input, outcome| {
         let base = i as f64 / n as f64;
-        ctx.report(base, &format!("Analisando {}", stem(input)));
+        ctx.report(base, &tr!("Analisando {file}", file = stem(input)));
         let pages = qpdf::page_count(input, &ctx.cancel)?;
         let original = file_size(input)?;
         let job = JobDir::new()?;
         let result = job.file("comprimido.pdf");
-        let step = if level == CompressLevel::Lossless { "Otimizando" } else { "Recomprimindo imagens de" };
-        ctx.report(base + 0.1 / n as f64, &format!("{step} {}", stem(input)));
+        let step = if level == CompressLevel::Lossless {
+            tr!("Otimizando {file}", file = stem(input))
+        } else {
+            tr!("Recomprimindo imagens de {file}", file = stem(input))
+        };
+        ctx.report(base + 0.1 / n as f64, &step);
         compress_file(input, level, &job, &result, &ctx.cancel)?;
         verify_pdf(&result, pages, ctx)?;
         let size = file_size(&result)?;
         let saving = 1.0 - size as f64 / original.max(1) as f64;
         if saving < MIN_SAVING {
-            outcome.notes.push(format!(
-                "“{}” já está otimizado: o resultado teria {} (original: {}). Nenhum arquivo novo foi criado.",
-                stem(input),
-                human::size(size),
-                human::size(original)
+            outcome.notes.push(tr!(
+                "“{file}” já está otimizado: o resultado teria {size} (original: {original}). Nenhum arquivo novo \
+                 foi criado.",
+                file = stem(input),
+                size = human::size(size),
+                original = human::size(original)
             ));
             return Ok(());
         }

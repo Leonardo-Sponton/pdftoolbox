@@ -25,6 +25,7 @@ use adw::prelude::*;
 use gtk::{gio, glib};
 
 use pdftoolbox::catalog::{ToolId, ToolInfo};
+use pdftoolbox::i18n::{self, Preference};
 
 pub use settings::{Settings, Theme};
 
@@ -66,11 +67,68 @@ impl AppState {
         self.nav.push(&page);
     }
 
+    /// Refaz os textos com o idioma atual: menu principal, tela inicial
+    /// (mantendo os arquivos escolhidos) e lista de tarefas. Diálogos e
+    /// páginas abertos daqui em diante já nascem no novo idioma; as páginas
+    /// de ferramentas já abertas mantêm o anterior até serem fechadas, para
+    /// não perder opções, senhas digitadas e alterações não salvas.
+    fn relocalize(self: &Rc<Self>) {
+        refresh_primary_menus();
+        self.tasks.relocalize();
+        let old = self.home.borrow_mut().take();
+        let home = home::Home::build(self);
+        // A etiqueta precisa ser única na navegação: a nova tela entra sem
+        // ela, a antiga sai, e só então a etiqueta passa para a nova.
+        home.page.set_tag(None);
+        self.nav.add(&home.page);
+        let mut stack: Vec<adw::NavigationPage> =
+            self.nav.navigation_stack().iter::<adw::NavigationPage>().flatten().collect();
+        let tools_open = stack.len() > 1;
+        match stack.first_mut() {
+            Some(first) if first.tag().as_deref() == Some(HOME) => *first = home.page.clone(),
+            _ => stack.insert(0, home.page.clone()),
+        }
+        self.nav.replace(&stack);
+        if let Some(old) = &old {
+            self.nav.remove(&old.page);
+            home.add(old.staged_files());
+        }
+        home.page.set_tag(Some(HOME));
+        *self.home.borrow_mut() = Some(home);
+        if tools_open {
+            self.toast(tr!("As ferramentas já abertas mudam de idioma quando forem abertas de novo."));
+        }
+    }
+
     pub fn stage_files(&self, files: Vec<PathBuf>) {
         if let Some(home) = self.home.borrow().as_ref() {
             home.add(files);
         }
         self.nav.pop_to_tag(HOME);
+    }
+}
+
+/// Aplica a preferência de idioma guardada, antes de o GTK iniciar.
+pub fn init_language() {
+    let language = i18n::apply(Settings::load().language);
+    // SAFETY: chamado no início de `main`, antes de existir outra thread.
+    unsafe { i18n::align_system_libraries(language, i18n::system()) };
+}
+
+/// Altera e grava as preferências. Usa a cópia da janela, se existir: senão
+/// o próximo save() dela (recentes, opções) desfaria a alteração.
+fn update_settings(change: impl FnOnce(&mut Settings)) {
+    match STATE.with(|s| s.borrow().clone()) {
+        Some(st) => {
+            let mut s = st.settings.borrow_mut();
+            change(&mut s);
+            s.save();
+        }
+        None => {
+            let mut s = Settings::load();
+            change(&mut s);
+            s.save();
+        }
     }
 }
 
@@ -102,23 +160,26 @@ pub fn startup(app: &adw::Application) {
             let theme = Theme::from_key(&key);
             theme.apply();
             action.set_state(&theme.key().to_variant());
-            // Grava pela cópia da janela, se existir: senão o próximo save()
-            // dela (recentes, opções) reverteria o tema escolhido.
-            match STATE.with(|s| s.borrow().clone()) {
-                Some(st) => {
-                    let mut s = st.settings.borrow_mut();
-                    s.theme = theme;
-                    s.save();
-                }
-                None => {
-                    let mut s = Settings::load();
-                    s.theme = theme;
-                    s.save();
-                }
+            update_settings(|s| s.theme = theme);
+        })
+        .build();
+    let language = gio::ActionEntry::builder("language")
+        .parameter_type(Some(glib::VariantTy::STRING))
+        .state(Settings::load().language.key().to_variant())
+        .activate(|_, action, param| {
+            let key = param.and_then(|p| p.get::<String>()).unwrap_or_default();
+            let preference = Preference::from_key(&key);
+            action.set_state(&preference.key().to_variant());
+            update_settings(|s| s.language = preference);
+            let before = i18n::current();
+            if i18n::apply(preference) != before
+                && let Some(st) = STATE.with(|s| s.borrow().clone())
+            {
+                st.relocalize();
             }
         })
         .build();
-    app.add_action_entries([quit, theme]);
+    app.add_action_entries([quit, theme, language]);
     app.set_accels_for_action("app.quit", &["<Control>q"]);
     app.set_accels_for_action("win.open", &["<Control>o"]);
     app.set_accels_for_action("win.search", &["<Control>f"]);
@@ -228,22 +289,22 @@ fn confirm_close(st: &AppState, win: &adw::ApplicationWindow) -> glib::Propagati
     }
     let (title, body) = match (running, unsaved) {
         (0, _) => (
-            "Descartar as alterações?",
-            "Há alterações que ainda não foram salvas. Se fechar agora, elas serão perdidas; os PDFs originais não \
-             foram alterados.",
+            tr!("Descartar as alterações?"),
+            tr!("Há alterações que ainda não foram salvas. Se fechar agora, elas serão perdidas; os PDFs originais \
+                 não foram alterados."),
         ),
         (_, false) => (
-            "Há tarefas em andamento",
-            "Se fechar agora, as tarefas serão interrompidas e os arquivos parciais descartados.",
+            tr!("Há tarefas em andamento"),
+            tr!("Se fechar agora, as tarefas serão interrompidas e os arquivos parciais descartados."),
         ),
         _ => (
-            "Há tarefas em andamento e alterações não salvas",
-            "Se fechar agora, as tarefas serão interrompidas, os arquivos parciais descartados e as alterações não \
-             salvas perdidas.",
+            tr!("Há tarefas em andamento e alterações não salvas"),
+            tr!("Se fechar agora, as tarefas serão interrompidas, os arquivos parciais descartados e as alterações \
+                 não salvas perdidas."),
         ),
     };
     let dialog = adw::AlertDialog::new(Some(title), Some(body));
-    dialog.add_responses(&[("ficar", "Continuar aqui"), ("sair", "Fechar mesmo assim")]);
+    dialog.add_responses(&[("ficar", tr!("Continuar aqui")), ("sair", tr!("Fechar mesmo assim"))]);
     dialog.set_response_appearance("sair", adw::ResponseAppearance::Destructive);
     dialog.set_default_response(Some("ficar"));
     dialog.set_close_response("ficar");
@@ -257,25 +318,66 @@ fn confirm_close(st: &AppState, win: &adw::ApplicationWindow) -> glib::Propagati
     glib::Propagation::Stop
 }
 
-/// Menu principal, compartilhado pelas páginas.
-pub fn primary_menu() -> gtk::MenuButton {
+thread_local! {
+    /// Modelo único do menu principal: refeito no lugar quando o idioma
+    /// muda, e todos os botões de menu já criados mostram os novos textos.
+    static PRIMARY_MENU: gio::Menu = gio::Menu::new();
+    static MENU_BUTTONS: RefCell<Vec<glib::WeakRef<gtk::MenuButton>>> = const { RefCell::new(Vec::new()) };
+}
+
+fn fill_primary_menu(menu: &gio::Menu) {
+    menu.remove_all();
     let theme = gio::Menu::new();
-    theme.append(Some("Seguir o sistema"), Some("app.theme::sistema"));
-    theme.append(Some("Claro"), Some("app.theme::claro"));
-    theme.append(Some("Escuro"), Some("app.theme::escuro"));
-    let menu = gio::Menu::new();
-    menu.append_section(Some("Tema"), &theme);
+    theme.append(Some(tr!("Seguir o sistema")), Some("app.theme::sistema"));
+    theme.append(Some(tr!("Claro")), Some("app.theme::claro"));
+    theme.append(Some(tr!("Escuro")), Some("app.theme::escuro"));
+    menu.append_section(Some(tr!("Tema")), &theme);
+    // Os nomes dos idiomas ficam na própria língua, para serem achados
+    // mesmo com a interface num idioma que a pessoa não lê.
+    let language = gio::Menu::new();
+    for preference in Preference::ALL {
+        let label = match preference {
+            Preference::System => tr!("Seguir o sistema"),
+            Preference::Fixed(language) => language.native_name(),
+        };
+        language.append(Some(label), Some(&format!("app.language::{}", preference.key())));
+    }
+    menu.append_section(Some(tr!("Idioma · Language")), &language);
     let more = gio::Menu::new();
-    more.append(Some("Tarefas"), Some("win.tasks"));
-    more.append(Some("Dependências"), Some("win.dependencies"));
-    more.append(Some("Sobre o PDFToolbox"), Some("win.about"));
+    more.append(Some(tr!("Tarefas")), Some("win.tasks"));
+    more.append(Some(tr!("Dependências")), Some("win.dependencies"));
+    more.append(Some(tr!("Sobre o PDFToolbox")), Some("win.about"));
     menu.append_section(None, &more);
-    let button = gtk::MenuButton::builder()
-        .icon_name("open-menu-symbolic")
-        .menu_model(&menu)
-        .tooltip_text("Menu principal")
-        .primary(true)
-        .build();
-    button.update_property(&[gtk::accessible::Property::Label("Menu principal")]);
+}
+
+fn refresh_primary_menus() {
+    PRIMARY_MENU.with(fill_primary_menu);
+    MENU_BUTTONS.with(|buttons| {
+        buttons.borrow_mut().retain(|weak| match weak.upgrade() {
+            Some(button) => {
+                label_menu_button(&button);
+                true
+            }
+            None => false,
+        });
+    });
+}
+
+fn label_menu_button(button: &gtk::MenuButton) {
+    button.set_tooltip_text(Some(tr!("Menu principal")));
+    button.update_property(&[gtk::accessible::Property::Label(tr!("Menu principal"))]);
+}
+
+/// Botão do menu principal, compartilhado pelas páginas.
+pub fn primary_menu() -> gtk::MenuButton {
+    let menu = PRIMARY_MENU.with(|menu| {
+        if menu.n_items() == 0 {
+            fill_primary_menu(menu);
+        }
+        menu.clone()
+    });
+    let button = gtk::MenuButton::builder().icon_name("open-menu-symbolic").menu_model(&menu).primary(true).build();
+    label_menu_button(&button);
+    MENU_BUTTONS.with(|buttons| buttons.borrow_mut().push(button.downgrade()));
     button
 }

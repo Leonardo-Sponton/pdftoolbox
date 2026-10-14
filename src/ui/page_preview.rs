@@ -68,11 +68,11 @@ impl PagePreview {
         let summary = gtk::Label::builder().wrap(true).xalign(0.0).build();
         summary.add_css_class("pv-resumo");
         summary.set_accessible_role(gtk::AccessibleRole::Status);
-        let zoom_hint = "Para ampliar uma página, clique nela com o botão direito ou use a tecla espaço.";
+        let zoom_hint = tr!("Para ampliar uma página, clique nela com o botão direito ou use a tecla espaço.");
         let hint = gtk::Label::builder()
-            .label(
-                "Clique numa página para marcá-la ou desmarcá-la. Para ampliar, use o botão direito ou a tecla espaço.",
-            )
+            .label(tr!(
+                "Clique numa página para marcá-la ou desmarcá-la. Para ampliar, use o botão direito ou a tecla espaço."
+            ))
             .wrap(true)
             .xalign(0.0)
             .build();
@@ -100,8 +100,8 @@ impl PagePreview {
             .build();
         scroll.add_css_class("card");
         let chooser = gtk::DropDown::builder().valign(gtk::Align::Center).visible(false).build();
-        chooser.set_tooltip_text(Some("Arquivo mostrado na pré-visualização"));
-        let group = adw::PreferencesGroup::builder().title("Pré-visualização").header_suffix(&chooser).build();
+        chooser.set_tooltip_text(Some(tr!("Arquivo mostrado na pré-visualização")));
+        let group = adw::PreferencesGroup::builder().title(tr!("Pré-visualização")).header_suffix(&chooser).build();
         let inner = gtk::Box::new(gtk::Orientation::Vertical, 8);
         inner.append(&summary);
         inner.append(&hint);
@@ -195,9 +195,9 @@ impl PagePreview {
             .enumerate()
             .map(|(i, c)| {
                 let rotation = c.thumb.rotation();
-                let mut label = format!("Página {} de {total}", i + 1);
+                let mut label = tr!("Página {page} de {total}", page = i + 1, total);
                 if rotation != 0 {
-                    label.push_str(&format!(" · girada {rotation}°"));
+                    label.push_str(&tr!(" · girada {rotation}°", rotation));
                 }
                 ZoomItem { page: i as u32 + 1, rotation, label, texture: None }
             })
@@ -252,12 +252,12 @@ impl PagePreview {
         self.last_marked.borrow_mut().clear();
         let Some(path) = path else {
             self.set_cells(0);
-            self.show_message(Some("Adicione um arquivo para ver as páginas aqui."));
+            self.show_message(Some(tr!("Adicione um arquivo para ver as páginas aqui.")));
             self.summary.set_visible(false);
             self.notify_loaded();
             return;
         };
-        self.show_message(Some("Lendo o documento…"));
+        self.show_message(Some(tr!("Lendo o documento…")));
         let cancel = CancelToken::new();
         *self.loader.borrow_mut() = Some(cancel.clone());
         let weak = Rc::downgrade(self);
@@ -269,24 +269,27 @@ impl PagePreview {
             }
             if facts.locked {
                 p.set_cells(0);
-                p.show_message(Some(
+                p.show_message(Some(tr!(
                     "🔒 Este PDF está protegido por senha, então as páginas não podem ser mostradas. \
-                     Adicione-o de novo e digite a senha quando ela for pedida.",
-                ));
+                     Adicione-o de novo e digite a senha quando ela for pedida."
+                )));
                 p.notify_loaded();
                 return;
             }
             let total = match (facts.problem, facts.pages) {
                 (Some(problem), _) => {
                     p.set_cells(0);
-                    p.show_message(Some(&format!("⚠ {problem}. Não é possível mostrar as páginas.")));
+                    p.show_message(Some(&tr!(
+                        "⚠ {problem}. Não é possível mostrar as páginas.",
+                        problem = pdftoolbox::i18n::tr(problem)
+                    )));
                     p.notify_loaded();
                     return;
                 }
                 (None, Some(n)) => n,
                 (None, None) => {
                     p.set_cells(0);
-                    p.show_message(Some("Não foi possível ler as páginas."));
+                    p.show_message(Some(tr!("Não foi possível ler as páginas.")));
                     p.notify_loaded();
                     return;
                 }
@@ -388,15 +391,17 @@ impl PagePreview {
             cell.badge.set_visible(mark.badge.is_some());
             cell.badge.set_text(mark.badge.as_deref().unwrap_or_default());
             cell.thumb.set_rotation(mark.rotation);
-            let mut desc = format!("Página {}", i + 1);
-            match &mark.kind {
-                MarkKind::Selected if mark.rotation != 0 => desc.push_str(&format!(", será girada {}°", mark.rotation)),
-                MarkKind::Selected => desc.push_str(", selecionada"),
-                MarkKind::Removed => desc.push_str(", será removida"),
-                MarkKind::Excluded => desc.push_str(", fica de fora"),
-                MarkKind::Group(g) => desc.push_str(&format!(", vai para o arquivo {}", g + 1)),
-                MarkKind::Normal => {}
-            }
+            let page = i + 1;
+            let desc = match &mark.kind {
+                MarkKind::Selected if mark.rotation != 0 => {
+                    tr!("Página {page}, será girada {rotation}°", page, rotation = mark.rotation)
+                }
+                MarkKind::Selected => tr!("Página {page}, selecionada", page),
+                MarkKind::Removed => tr!("Página {page}, será removida", page),
+                MarkKind::Excluded => tr!("Página {page}, fica de fora", page),
+                MarkKind::Group(g) => tr!("Página {page}, vai para o arquivo {file}", page, file = g + 1),
+                MarkKind::Normal => tr!("Página {page}", page),
+            };
             cell.child.update_property(&[gtk::accessible::Property::Label(&desc)]);
         }
         // Planos inválidos ou vazios não mexem na rolagem nem na referência.
@@ -443,7 +448,7 @@ fn make_cell(page: u32) -> PageCell {
     frame.append(&number);
     let child = gtk::FlowBoxChild::new();
     child.set_child(Some(&frame));
-    child.update_property(&[gtk::accessible::Property::Label(&format!("Página {page}"))]);
+    child.update_property(&[gtk::accessible::Property::Label(&tr!("Página {page}", page))]);
     PageCell { child, frame, thumb, badge }
 }
 
@@ -491,8 +496,8 @@ impl LayoutPreview {
         let more = gtk::Label::builder().xalign(0.0).visible(false).build();
         more.add_css_class("pv-legenda");
         let group = adw::PreferencesGroup::builder()
-            .title("Pré-visualização")
-            .description("Onde cada imagem ficará na página. Imagens mais largas que altas ganham página deitada.")
+            .title(tr!("Pré-visualização"))
+            .description(tr!("Onde cada imagem ficará na página. Imagens mais largas que altas ganham página deitada."))
             .build();
         let inner = gtk::Box::new(gtk::Orientation::Vertical, 8);
         inner.append(&flow);
@@ -513,17 +518,24 @@ impl LayoutPreview {
         }
         let extra = images.len().saturating_sub(MAX_SHEETS);
         self.more.set_visible(extra > 0);
-        self.more.set_text(&format!("e mais {extra} página{} com a mesma regra.", if extra == 1 { "" } else { "s" }));
+        self.more.set_text(&trn!(
+            extra,
+            "e mais {extra} página com a mesma regra.",
+            "e mais {extra} páginas com a mesma regra.",
+            extra
+        ));
     }
 }
 
 fn size_name(layout: ImageLayout, landscape: bool) -> String {
-    let base = match layout.size {
-        PageSize::A4 => "A4",
-        PageSize::Letter => "Carta",
-        PageSize::FitImage => return "tamanho da imagem".into(),
-    };
-    format!("{base} {}", if landscape { "paisagem" } else { "retrato" })
+    match (layout.size, landscape) {
+        (PageSize::A4, false) => tr!("A4 retrato"),
+        (PageSize::A4, true) => tr!("A4 paisagem"),
+        (PageSize::Letter, false) => tr!("Carta retrato"),
+        (PageSize::Letter, true) => tr!("Carta paisagem"),
+        (PageSize::FitImage, _) => tr!("tamanho da imagem"),
+    }
+    .to_string()
 }
 
 fn sheet(n: usize, path: &Path, dims: Option<(f32, f32)>, layout: ImageLayout) -> gtk::Widget {
@@ -584,8 +596,8 @@ impl StampPreview {
         inner.append(&overlay);
         inner.append(&caption);
         let group = adw::PreferencesGroup::builder()
-            .title("Como vai ficar")
-            .description("A página é renderizada com o resultado real, antes de salvar.")
+            .title(tr!("Como vai ficar"))
+            .description(tr!("A página é renderizada com o resultado real, antes de salvar."))
             .build();
         group.add(&inner);
         group.set_visible(false);
@@ -629,7 +641,7 @@ impl StampPreview {
                 me.spinner.set_visible(false);
                 match texture {
                     Some(t) => me.thumb.set_texture(Some(&t)),
-                    None => me.caption.set_text("Não foi possível gerar a prévia desta página."),
+                    None => me.caption.set_text(tr!("Não foi possível gerar a prévia desta página.")),
                 }
             });
         });
@@ -674,7 +686,7 @@ impl TextPreview {
         let inner = gtk::Box::new(gtk::Orientation::Vertical, 8);
         inner.append(&note);
         inner.append(&scroll);
-        let group = adw::PreferencesGroup::builder().title("Prévia do texto").build();
+        let group = adw::PreferencesGroup::builder().title(tr!("Prévia do texto")).build();
         group.add(&inner);
         group.set_visible(false);
         Rc::new(TextPreview { group, text, scroll, note, generation: Cell::new(0) })
@@ -688,11 +700,11 @@ impl TextPreview {
             return;
         };
         self.group.set_visible(true);
-        self.group.set_description(Some(&glib::markup_escape_text(&format!(
-            "Como o texto de “{}” ficará no arquivo .txt.",
-            human::file_name(&path)
+        self.group.set_description(Some(&glib::markup_escape_text(&tr!(
+            "Como o texto de “{file}” ficará no arquivo .txt.",
+            file = human::file_name(&path)
         ))));
-        self.text.set_text("Lendo…");
+        self.text.set_text(tr!("Lendo…"));
         self.scroll.set_visible(true);
         self.note.set_visible(false);
         let this = Rc::downgrade(self);
@@ -704,37 +716,52 @@ impl TextPreview {
             }
             match text {
                 Some(Some((page, t))) => {
-                    let start = match page {
-                        1 => String::new(),
-                        2 => " A página 1 não tem texto selecionável (capa ou imagem?).".into(),
-                        3 => " As páginas 1 e 2 não têm texto selecionável (capa ou imagens?).".into(),
-                        n => format!(" As páginas 1 a {} não têm texto selecionável (capa ou imagens?).", n - 1),
+                    let file = human::file_name(&path);
+                    let description = match page {
+                        1 => tr!("Página {page} de “{file}”, como ficará no arquivo .txt.", page, file),
+                        2 => tr!(
+                            "Página 2 de “{file}”, como ficará no arquivo .txt. A página 1 não tem texto selecionável \
+                             (capa ou imagem?).",
+                            file
+                        ),
+                        3 => tr!(
+                            "Página 3 de “{file}”, como ficará no arquivo .txt. As páginas 1 e 2 não têm texto \
+                             selecionável (capa ou imagens?).",
+                            file
+                        ),
+                        n => tr!(
+                            "Página {page} de “{file}”, como ficará no arquivo .txt. As páginas 1 a {last} não têm \
+                             texto selecionável (capa ou imagens?).",
+                            page = n,
+                            file,
+                            last = n - 1
+                        ),
                     };
-                    me.group.set_description(Some(&glib::markup_escape_text(&format!(
-                        "Página {page} de “{}”, como ficará no arquivo .txt.{start}",
-                        human::file_name(&path)
-                    ))));
+                    me.group.set_description(Some(&glib::markup_escape_text(&description)));
                     const MAX_LINES: usize = 60;
                     let lines: Vec<&str> = t.trim_end().lines().collect();
                     let mut shown = lines.iter().take(MAX_LINES).copied().collect::<Vec<_>>().join("\n");
                     if lines.len() > MAX_LINES {
-                        shown.push_str(&format!("\n… (mais {} linhas)", lines.len() - MAX_LINES));
+                        shown.push('\n');
+                        shown.push_str(&tr!("… (mais {n} linhas)", n = lines.len() - MAX_LINES));
                     }
                     me.text.set_text(&shown);
                 }
                 Some(None) => {
                     me.text.set_text("");
                     me.scroll.set_visible(false);
-                    me.note.set_text(
+                    me.note.set_text(tr!(
                         "Nenhuma página tem texto selecionável — o PDF parece ser uma digitalização (imagem). \
-                         O texto só será extraído com “Reconhecer texto das páginas digitalizadas (OCR)” ligado.",
-                    );
+                         O texto só será extraído com “Reconhecer texto das páginas digitalizadas (OCR)” ligado."
+                    ));
                     me.note.set_visible(true);
                 }
                 None => {
                     me.text.set_text("");
                     me.scroll.set_visible(false);
-                    me.note.set_text("Não foi possível ler o texto deste arquivo (protegido por senha ou danificado).");
+                    me.note.set_text(tr!(
+                        "Não foi possível ler o texto deste arquivo (protegido por senha ou danificado)."
+                    ));
                     me.note.set_visible(true);
                 }
             }

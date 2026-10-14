@@ -70,13 +70,15 @@ impl Tool {
 
     pub fn purpose(self) -> &'static str {
         match self {
-            Tool::Qpdf => "Mesclar, dividir, extrair, remover, girar, organizar, compressão sem perda e verificação",
-            Tool::Pdftoppm => "Miniaturas e conversão de PDF para PNG, JPEG e TIFF",
-            Tool::Pdfinfo => "Leitura de informações das páginas e dos metadados",
-            Tool::Pdftotext => "Extração de texto",
-            Tool::Ghostscript => "Compressão com redução de imagens (níveis Recomendada e Máxima)",
-            Tool::LibreOffice => "Conversão de documentos, planilhas e apresentações para PDF",
-            Tool::Tesseract => "Reconhecimento de texto (OCR) em documentos digitalizados",
+            Tool::Qpdf => {
+                tr!("Mesclar, dividir, extrair, remover, girar, organizar, compressão sem perda e verificação")
+            }
+            Tool::Pdftoppm => tr!("Miniaturas e conversão de PDF para PNG, JPEG e TIFF"),
+            Tool::Pdfinfo => tr!("Leitura de informações das páginas e dos metadados"),
+            Tool::Pdftotext => tr!("Extração de texto"),
+            Tool::Ghostscript => tr!("Compressão com redução de imagens (níveis Recomendada e Máxima)"),
+            Tool::LibreOffice => tr!("Conversão de documentos, planilhas e apresentações para PDF"),
+            Tool::Tesseract => tr!("Reconhecimento de texto (OCR) em documentos digitalizados"),
         }
     }
 
@@ -250,6 +252,11 @@ where
         // Uma thread por processo: as páginas já são reconhecidas em paralelo.
         cmd.env("OMP_THREAD_LIMIT", "1");
     }
+    match crate::i18n::inherited_language_variable() {
+        Some(Some(value)) => _ = cmd.env("LANGUAGE", value),
+        Some(None) => _ = cmd.env_remove("LANGUAGE"),
+        None => {}
+    }
     // Grupo de processos próprio: o cancelamento encerra também os filhos
     // (o LibreOffice, por exemplo, roda em mais de um processo).
     let mut child = cmd
@@ -260,7 +267,7 @@ where
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .spawn()
-        .map_err(|e| OpError::io(format!("iniciar {}", tool.program()), e))?;
+        .map_err(|e| OpError::io(tr!("iniciar {program}", program = tool.program()), e))?;
 
     let pid = child.id();
     running().lock().unwrap_or_else(std::sync::PoisonError::into_inner).push(pid);
@@ -293,7 +300,7 @@ where
             Ok(None) => thread::sleep(Duration::from_millis(25)),
             Err(e) => {
                 unregister();
-                return Err(OpError::io(format!("aguardar {}", tool.program()), e));
+                return Err(OpError::io(tr!("aguardar {program}", program = tool.program()), e));
             }
         }
     };

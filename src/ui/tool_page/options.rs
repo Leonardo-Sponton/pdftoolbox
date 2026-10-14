@@ -159,9 +159,9 @@ impl LanguageRows {
     pub fn update_subtitle(&self) {
         let chosen = self.selected();
         let text = if self.switches.borrow().is_empty() {
-            "Nenhum idioma instalado".to_string()
+            tr!("Nenhum idioma instalado").to_string()
         } else if chosen.is_empty() {
-            "Nenhum escolhido".to_string()
+            tr!("Nenhum escolhido").to_string()
         } else {
             let names: Vec<String> = chosen.iter().map(|c| operations::language_name(c)).collect();
             names.join(", ")
@@ -241,15 +241,19 @@ impl Options {
     pub fn build(info: &ToolInfo, group: &adw::PreferencesGroup) -> Options {
         match info.id {
             ToolId::Merge => {
-                group.set_description(Some(
-                    "Os arquivos são unidos na ordem da lista acima. Arraste as linhas ou use as setas para reordenar.",
-                ));
+                group.set_description(Some(tr!(
+                    "Os arquivos são unidos na ordem da lista acima. Arraste as linhas ou use as setas para reordenar."
+                )));
                 Options::None
             }
             ToolId::Split => {
-                let mode = combo("Modo", &["Por intervalos", "A cada N páginas", "Uma página por arquivo"], 0);
-                let ranges = entry("Intervalos — cada um vira um arquivo (ex.: 1-3, 4-8, 9-)");
-                let every = spin("Páginas por arquivo", "", 1.0, 10_000.0, 1.0, 2.0);
+                let mode = combo(
+                    tr!("Modo"),
+                    &[tr!("Por intervalos"), tr!("A cada N páginas"), tr!("Uma página por arquivo")],
+                    0,
+                );
+                let ranges = entry(tr!("Intervalos — cada um vira um arquivo (ex.: 1-3, 4-8, 9-)"));
+                let every = spin(tr!("Páginas por arquivo"), "", 1.0, 10_000.0, 1.0, 2.0);
                 every.set_visible(false);
                 let (r, e) = (ranges.clone(), every.clone());
                 mode.connect_selected_notify(move |m| {
@@ -260,54 +264,61 @@ impl Options {
                 Options::Split { mode, ranges, every }
             }
             ToolId::Extract => {
-                let spec = entry("Páginas a extrair (ex.: 1-3, 7, 10-)");
+                let spec = entry(tr!("Páginas a extrair (ex.: 1-3, 7, 10-)"));
                 let separate = switch(
-                    "Um arquivo por página",
-                    "Desligado: todas as páginas escolhidas em um único PDF, na ordem digitada",
+                    tr!("Um arquivo por página"),
+                    tr!("Desligado: todas as páginas escolhidas em um único PDF, na ordem digitada"),
                     false,
                 );
                 add_rows(group, &[spec.upcast_ref(), separate.upcast_ref()]);
                 Options::Extract { spec, separate }
             }
             ToolId::Remove => {
-                let spec = entry("Páginas a remover (ex.: 2, 5-7)");
+                let spec = entry(tr!("Páginas a remover (ex.: 2, 5-7)"));
                 group.add(&spec);
                 Options::Remove { spec }
             }
             ToolId::Rotate => {
                 let angle = combo(
-                    "Rotação",
-                    &["↻ 90° no sentido horário", "180° (de cabeça para baixo)", "↺ 90° no sentido anti-horário"],
+                    tr!("Rotação"),
+                    &[
+                        tr!("↻ 90° no sentido horário"),
+                        tr!("180° (de cabeça para baixo)"),
+                        tr!("↺ 90° no sentido anti-horário"),
+                    ],
                     0,
                 );
-                let spec = entry("Páginas (deixe vazio para todas)");
+                let spec = entry(tr!("Páginas (deixe vazio para todas)"));
                 add_rows(group, &[angle.upcast_ref(), spec.upcast_ref()]);
                 Options::Rotate { angle, spec }
             }
             ToolId::ImagesToPdf => {
-                let size = combo("Tamanho da página", &["A4", "Carta", "Igual à imagem"], 0);
-                let margin = spin("Margem", "Em milímetros", 0.0, 50.0, 1.0, 10.0);
-                let one_file = switch("Juntar em um único PDF", "Desligado: um PDF para cada imagem", true);
+                let size = combo(tr!("Tamanho da página"), &["A4", tr!("Carta"), tr!("Igual à imagem")], 0);
+                let margin = spin(tr!("Margem"), tr!("Em milímetros"), 0.0, 50.0, 1.0, 10.0);
+                let one_file = switch(tr!("Juntar em um único PDF"), tr!("Desligado: um PDF para cada imagem"), true);
                 let m = margin.clone();
                 size.connect_selected_notify(move |s| m.set_sensitive(s.selected() != 2));
-                group.set_description(Some(
-                    "JPEGs são incorporados sem recompressão. A orientação gravada pela câmera (EXIF) é respeitada.",
-                ));
+                group.set_description(Some(tr!(
+                    "JPEGs são incorporados sem recompressão. A orientação gravada pela câmera (EXIF) é respeitada."
+                )));
                 add_rows(group, &[size.upcast_ref(), margin.upcast_ref(), one_file.upcast_ref()]);
                 Options::Images { size, margin, one_file }
             }
             ToolId::PdfToImages => {
-                let format =
-                    combo("Formato", &["PNG — sem perda", "JPEG — arquivos menores", "TIFF — sem perda (LZW)"], 0);
+                let format = combo(
+                    tr!("Formato"),
+                    &[tr!("PNG — sem perda"), tr!("JPEG — arquivos menores"), tr!("TIFF — sem perda (LZW)")],
+                    0,
+                );
                 let dpi = spin(
-                    "Resolução",
-                    "Pontos por polegada: 150 para tela, 300 para impressão",
+                    tr!("Resolução"),
+                    tr!("Pontos por polegada: 150 para tela, 300 para impressão"),
                     36.0,
                     1200.0,
                     10.0,
                     150.0,
                 );
-                let quality = spin("Qualidade do JPEG", "De 10 a 100", 10.0, 100.0, 5.0, 90.0);
+                let quality = spin(tr!("Qualidade do JPEG"), tr!("De 10 a 100"), 10.0, 100.0, 5.0, 90.0);
                 quality.set_visible(false);
                 let q = quality.clone();
                 format.connect_selected_notify(move |f| q.set_visible(f.selected() == 1));
@@ -318,25 +329,32 @@ impl Options {
             ToolId::Organize | ToolId::Annotate => Options::None,
             ToolId::NumberPages => {
                 let position = combo(
-                    "Posição",
+                    tr!("Posição"),
                     &[
-                        "Embaixo, à direita",
-                        "Embaixo, no centro",
-                        "Embaixo, à esquerda",
-                        "Em cima, à direita",
-                        "Em cima, no centro",
-                        "Em cima, à esquerda",
+                        tr!("Embaixo, à direita"),
+                        tr!("Embaixo, no centro"),
+                        tr!("Embaixo, à esquerda"),
+                        tr!("Em cima, à direita"),
+                        tr!("Em cima, no centro"),
+                        tr!("Em cima, à esquerda"),
                     ],
                     1,
                 );
-                let format = combo("Formato", &["1, 2, 3…", "1 / 10", "Página 1 de 10"], 0);
-                let first = spin("Começar em", "Número mostrado na primeira página numerada", 0.0, 99_999.0, 1.0, 1.0);
-                let size = spin("Tamanho do texto", "Em pontos", 6.0, 36.0, 1.0, 11.0);
-                let spec = entry("Páginas a numerar (vazio = todas; “2-” pula a capa)");
-                group.set_description(Some(
+                let format = combo(tr!("Formato"), &["1, 2, 3…", "1 / 10", tr!("Página 1 de 10")], 0);
+                let first = spin(
+                    tr!("Começar em"),
+                    tr!("Número mostrado na primeira página numerada"),
+                    0.0,
+                    99_999.0,
+                    1.0,
+                    1.0,
+                );
+                let size = spin(tr!("Tamanho do texto"), tr!("Em pontos"), 6.0, 36.0, 1.0, 11.0);
+                let spec = entry(tr!("Páginas a numerar (vazio = todas; “2-” pula a capa)"));
+                group.set_description(Some(tr!(
                     "O número é desenhado sobre a página, a 1 cm da borda; o conteúdo original não é alterado nem \
-                     convertido em imagem.",
-                ));
+                     convertido em imagem."
+                )));
                 add_rows(
                     group,
                     &[
@@ -350,21 +368,22 @@ impl Options {
                 Options::Numbers { position, format, first, size, spec }
             }
             ToolId::Watermark => {
-                let text = entry("Texto da marca d’água");
-                text.set_text("CONFIDENCIAL");
-                let color = combo("Cor", &["Cinza", "Vermelho", "Azul", "Preto"], 0);
-                let opacity = spin("Opacidade", "Em %: quanto menor, mais transparente", 5.0, 100.0, 5.0, 30.0);
-                let scale = spin("Tamanho", "Em % da diagonal da página", 10.0, 100.0, 5.0, 60.0);
-                let diagonal = switch("Na diagonal", "Desligado: na horizontal, no centro da página", true);
+                let text = entry(tr!("Texto da marca d’água"));
+                text.set_text(tr!("CONFIDENCIAL"));
+                let color = combo(tr!("Cor"), &[tr!("Cinza"), tr!("Vermelho"), tr!("Azul"), tr!("Preto")], 0);
+                let opacity =
+                    spin(tr!("Opacidade"), tr!("Em %: quanto menor, mais transparente"), 5.0, 100.0, 5.0, 30.0);
+                let scale = spin(tr!("Tamanho"), tr!("Em % da diagonal da página"), 10.0, 100.0, 5.0, 60.0);
+                let diagonal = switch(tr!("Na diagonal"), tr!("Desligado: na horizontal, no centro da página"), true);
                 let sc = scale.clone();
                 diagonal.connect_active_notify(move |d| {
                     sc.set_subtitle(if d.is_active() {
-                        "Em % da diagonal da página"
+                        tr!("Em % da diagonal da página")
                     } else {
-                        "Em % da largura da página"
+                        tr!("Em % da largura da página")
                     });
                 });
-                let spec = entry("Páginas (deixe vazio para todas)");
+                let spec = entry(tr!("Páginas (deixe vazio para todas)"));
                 add_rows(
                     group,
                     &[
@@ -381,42 +400,46 @@ impl Options {
             ToolId::Metadata => Options::Metadata(Box::new(build_metadata(group))),
             ToolId::Protect => Options::Protect(Box::new(build_protect(group))),
             ToolId::Unlock => {
-                let password_row = password("Senha do documento");
-                group.set_description(Some(
+                let password_row = password(tr!("Senha do documento"));
+                group.set_description(Some(tr!(
                     "Informe a senha que você já conhece. Para remover restrições de impressão ou cópia, é preciso \
-                     a senha de permissões (do proprietário). Nenhuma senha é adivinhada ou contornada.",
-                ));
+                     a senha de permissões (do proprietário). Nenhuma senha é adivinhada ou contornada."
+                )));
                 group.add(&password_row);
                 Options::Unlock { password: password_row }
             }
             ToolId::PdfToText => {
                 let layout = switch(
-                    "Manter o layout",
-                    "Preserva colunas e espaçamento; desligado, segue a ordem de leitura",
+                    tr!("Manter o layout"),
+                    tr!("Preserva colunas e espaçamento; desligado, segue a ordem de leitura"),
                     false,
                 );
                 let ocr = switch(
-                    "Reconhecer texto das páginas digitalizadas (OCR)",
-                    "Lendo os idiomas instalados…",
+                    tr!("Reconhecer texto das páginas digitalizadas (OCR)"),
+                    tr!("Lendo os idiomas instalados…"),
                     Tool::Tesseract.find().is_some(),
                 );
                 ocr.set_sensitive(false);
-                group.set_description(Some(
+                group.set_description(Some(tr!(
                     "O texto selecionável é extraído como está. Páginas digitalizadas (imagens) só têm texto com o \
-                     reconhecimento ligado; ele é feito numa cópia temporária e só o .txt é gravado.",
-                ));
+                     reconhecimento ligado; ele é feito numa cópia temporária e só o .txt é gravado."
+                )));
                 add_rows(group, &[layout.upcast_ref(), ocr.upcast_ref()]);
                 Options::Text { layout, ocr, ocr_languages: Rc::default() }
             }
             ToolId::Ocr => {
                 let languages = adw::ExpanderRow::builder()
-                    .title("Idiomas do documento")
-                    .subtitle("Lendo os idiomas instalados…")
+                    .title(tr!("Idiomas do documento"))
+                    .subtitle(tr!("Lendo os idiomas instalados…"))
                     .build();
-                let skip = switch("Pular páginas que já têm texto", "Evita texto duplicado na busca e na cópia", true);
+                let skip = switch(
+                    tr!("Pular páginas que já têm texto"),
+                    tr!("Evita texto duplicado na busca e na cópia"),
+                    true,
+                );
                 let straighten = switch(
-                    "Endireitar páginas deitadas ou de cabeça para baixo",
-                    "Gira a página inteira, sem perda, quando o texto está de lado",
+                    tr!("Endireitar páginas deitadas ou de cabeça para baixo"),
+                    tr!("Gira a página inteira, sem perda, quando o texto está de lado"),
                     true,
                 );
                 add_rows(group, &[languages.upcast_ref(), skip.upcast_ref(), straighten.upcast_ref()]);
@@ -428,13 +451,14 @@ impl Options {
             }
             ToolId::OfficeToPdf => {
                 let isolated = if engines::network_isolation_available() {
-                    "A conversão roda isolada da rede."
+                    tr!("A conversão roda isolada da rede.")
                 } else {
-                    "Neste sistema, a conversão não pode ser isolada da rede."
+                    tr!("Neste sistema, a conversão não pode ser isolada da rede.")
                 };
-                group.set_description(Some(&format!(
+                group.set_description(Some(&tr!(
                     "Word, Excel, PowerPoint, LibreOffice, RTF, CSV e TXT, convertidos pelo LibreOffice instalado. \
-                     Macros não são executadas. {isolated} A primeira conversão pode levar alguns segundos."
+                     Macros não são executadas. {isolated} A primeira conversão pode levar alguns segundos.",
+                    isolated
                 )));
                 Options::Office
             }
@@ -534,17 +558,17 @@ impl Options {
 }
 
 fn build_compress(group: &adw::PreferencesGroup) -> CompressRows {
-    let level = combo("Nível", &["Sem perda", "Recomendada", "Máxima", "Personalizada"], 1);
+    let level = combo(tr!("Nível"), &[tr!("Sem perda"), tr!("Recomendada"), tr!("Máxima"), tr!("Personalizada")], 1);
     let dpi = spin(
-        "Resolução das imagens",
-        "Em ppp: 72 a 100 para tela, 150 para e-mail, 300 para impressão",
+        tr!("Resolução das imagens"),
+        tr!("Em ppp: 72 a 100 para tela, 150 para e-mail, 300 para impressão"),
         f64::from(*CUSTOM_DPI.start()),
         f64::from(*CUSTOM_DPI.end()),
         10.0,
         120.0,
     );
     dpi.set_visible(false);
-    let estimate = widgets::plain_row("Tamanho estimado", "Adicione um arquivo para ver a estimativa.");
+    let estimate = widgets::plain_row(tr!("Tamanho estimado"), tr!("Adicione um arquivo para ver a estimativa."));
     let spinner = gtk::Spinner::builder().valign(gtk::Align::Center).visible(false).build();
     estimate.add_suffix(&spinner);
     estimate.set_subtitle_selectable(true);
@@ -568,19 +592,24 @@ fn build_compress(group: &adw::PreferencesGroup) -> CompressRows {
 
 fn build_metadata(group: &adw::PreferencesGroup) -> MetadataRows {
     let rows = MetadataRows {
-        title: entry("Título"),
-        author: entry("Autor"),
-        subject: entry("Assunto"),
-        keywords: entry("Palavras-chave"),
+        title: entry(tr!("Título")),
+        author: entry(tr!("Autor")),
+        subject: entry(tr!("Assunto")),
+        keywords: entry(tr!("Palavras-chave")),
         remove_all: switch(
-            "Apagar todos os metadados",
-            "Remove também programas e datas — útil antes de compartilhar o arquivo",
+            tr!("Apagar todos os metadados"),
+            tr!("Remove também programas e datas — útil antes de compartilhar o arquivo"),
             false,
         ),
-        facts: [info_row("Criado com"), info_row("Gerado por"), info_row("Criado em"), info_row("Modificado em")],
+        facts: [
+            info_row(tr!("Criado com")),
+            info_row(tr!("Gerado por")),
+            info_row(tr!("Criado em")),
+            info_row(tr!("Modificado em")),
+        ],
         loaded: Rc::new(RefCell::new(None)),
     };
-    group.set_description(Some("Campos deixados em branco são removidos do arquivo."));
+    group.set_description(Some(tr!("Campos deixados em branco são removidos do arquivo.")));
     for row in rows.fields() {
         group.add(&row);
     }
@@ -599,27 +628,27 @@ fn build_metadata(group: &adw::PreferencesGroup) -> MetadataRows {
 
 fn build_protect(group: &adw::PreferencesGroup) -> ProtectRows {
     let rows = ProtectRows {
-        password: password("Senha para abrir"),
-        confirm: password("Repita a senha"),
+        password: password(tr!("Senha para abrir")),
+        confirm: password(tr!("Repita a senha")),
         restrict: adw::ExpanderRow::builder()
-            .title("Restringir impressão, cópia e edição")
-            .subtitle("Exige uma segunda senha, só para mudar as permissões")
+            .title(tr!("Restringir impressão, cópia e edição"))
+            .subtitle(tr!("Exige uma segunda senha, só para mudar as permissões"))
             .show_enable_switch(true)
             .enable_expansion(false)
             .build(),
-        owner: password("Senha de permissões"),
-        print: switch("Permitir imprimir", "", false),
-        copy: switch("Permitir copiar texto e imagens", "", false),
-        edit: switch("Permitir editar", "Inclui anotações e formulários", false),
+        owner: password(tr!("Senha de permissões")),
+        print: switch(tr!("Permitir imprimir"), "", false),
+        copy: switch(tr!("Permitir copiar texto e imagens"), "", false),
+        edit: switch(tr!("Permitir editar"), tr!("Inclui anotações e formulários"), false),
     };
     rows.restrict.add_row(&rows.owner);
     rows.restrict.add_row(&rows.print);
     rows.restrict.add_row(&rows.copy);
     rows.restrict.add_row(&rows.edit);
-    group.set_description(Some(
+    group.set_description(Some(tr!(
         "Criptografia AES-256. Guarde a senha: sem ela, ninguém consegue abrir o arquivo — nem este \
-         aplicativo. O original continua sem senha.",
-    ));
+         aplicativo. O original continua sem senha."
+    )));
     add_rows(group, &[rows.password.upcast_ref(), rows.confirm.upcast_ref(), rows.restrict.upcast_ref()]);
     rows
 }

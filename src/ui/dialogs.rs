@@ -9,15 +9,27 @@ use super::{APP_ID, widgets};
 pub fn dependencies(parent: &impl IsA<gtk::Widget>) {
     let page = adw::PreferencesPage::new();
     let group = adw::PreferencesGroup::builder()
-        .title("Ferramentas externas")
-        .description("Componentes nativos usados pelo PDFToolbox. O programa nunca instala nada nem executa comandos administrativos: copie o comando e rode-o você mesmo em um terminal.")
+        .title(tr!("Ferramentas externas"))
+        .description(tr!(
+            "Componentes nativos usados pelo PDFToolbox. O programa nunca instala nada nem executa comandos \
+             administrativos: copie o comando e rode-o você mesmo em um terminal."
+        ))
         .build();
     for tool in Tool::ALL {
         let (subtitle, icon) = match tool.version() {
-            Some(v) => (format!("Versão {v} · {}", tool.purpose()), "emblem-ok-symbolic"),
-            None if tool.find().is_some() => (format!("Instalado · {}", tool.purpose()), "emblem-ok-symbolic"),
+            Some(v) => {
+                (tr!("Versão {version} · {purpose}", version = v, purpose = tool.purpose()), "emblem-ok-symbolic")
+            }
+            None if tool.find().is_some() => {
+                (tr!("Instalado · {purpose}", purpose = tool.purpose()), "emblem-ok-symbolic")
+            }
             None => {
-                (format!("Não instalado · {}\n{}", tool.purpose(), tool.install_command()), "dialog-warning-symbolic")
+                let text = tr!(
+                    "Não instalado · {purpose}\n{command}",
+                    purpose = tool.purpose(),
+                    command = tool.install_command()
+                );
+                (text, "dialog-warning-symbolic")
             }
         };
         let row = widgets::plain_row(tool.label(), &subtitle);
@@ -26,7 +38,7 @@ pub fn dependencies(parent: &impl IsA<gtk::Widget>) {
         image.add_css_class(if icon == "emblem-ok-symbolic" { "success" } else { "warning" });
         row.add_prefix(&image);
         if tool.find().is_none() {
-            let copy = widgets::icon_button("edit-copy-symbolic", "Copiar comando de instalação");
+            let copy = widgets::icon_button("edit-copy-symbolic", tr!("Copiar comando de instalação"));
             let cmd = tool.install_command();
             copy.connect_clicked(move |b| {
                 b.clipboard().set_text(&cmd);
@@ -39,16 +51,24 @@ pub fn dependencies(parent: &impl IsA<gtk::Widget>) {
     page.add(&group);
 
     let privacy = adw::PreferencesGroup::builder()
-        .title("Privacidade")
-        .description("Todo o processamento acontece neste computador. O PDFToolbox não faz conexões de rede, não tem telemetria e não verifica atualizações. Arquivos temporários ficam em ~/.cache/pdftoolbox e são apagados ao fim de cada tarefa.")
+        .title(tr!("Privacidade"))
+        .description(tr!(
+            "Todo o processamento acontece neste computador. O PDFToolbox não faz conexões de rede, não tem \
+             telemetria e não verifica atualizações. Arquivos temporários ficam em ~/.cache/pdftoolbox e são \
+             apagados ao fim de cada tarefa."
+        ))
         .build();
     page.add(&privacy);
 
     let toolbar = adw::ToolbarView::new();
     toolbar.add_top_bar(&adw::HeaderBar::new());
     toolbar.set_content(Some(&page));
-    let dialog =
-        adw::Dialog::builder().title("Dependências").content_width(560).content_height(560).child(&toolbar).build();
+    let dialog = adw::Dialog::builder()
+        .title(tr!("Dependências"))
+        .content_width(560)
+        .content_height(560)
+        .child(&toolbar)
+        .build();
     dialog.present(Some(parent));
 }
 
@@ -63,7 +83,7 @@ pub fn about(parent: &impl IsA<gtk::Widget>) {
         .version(env!("CARGO_PKG_VERSION"))
         .developer_name("Leonardo")
         .license_type(gtk::License::Gpl30)
-        .comments("Suíte local de documentos PDF para Linux. Seus arquivos não saem do seu computador.")
+        .comments(tr!("Suíte local de documentos PDF para Linux. Seus arquivos não saem do seu computador."))
         .debug_info(format!(
             "PDFToolbox {}\nGTK {}.{}.{}\nlibadwaita {}.{}.{}\n{}",
             env!("CARGO_PKG_VERSION"),
@@ -77,7 +97,7 @@ pub fn about(parent: &impl IsA<gtk::Widget>) {
         ))
         .build();
     about.add_credit_section(
-        Some("Motores de processamento"),
+        Some(tr!("Motores de processamento")),
         &[
             "qpdf https://qpdf.sourceforge.io",
             "Poppler https://poppler.freedesktop.org",

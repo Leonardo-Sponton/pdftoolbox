@@ -1,3 +1,7 @@
+// As macros `tr!` e `trn!` da biblioteca valem em toda a interface.
+#[macro_use]
+extern crate pdftoolbox;
+
 mod ui;
 
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -6,6 +10,8 @@ use adw::prelude::*;
 use gtk::{gio, glib};
 
 fn main() -> glib::ExitCode {
+    // Antes de qualquer outra coisa: pode ajustar o ambiente para o GTK.
+    ui::init_language();
     pdftoolbox::storage::cleanup_stale_jobs();
     let app = adw::Application::builder().application_id(ui::APP_ID).flags(gio::ApplicationFlags::HANDLES_OPEN).build();
     app.connect_startup(ui::startup);

@@ -14,51 +14,61 @@ use crate::deskew;
 use crate::engines::{install_line, poppler, qpdf, tesseract};
 use crate::error::{OpError, OpResult};
 use crate::human;
+use crate::i18n::{n_, tr};
 use crate::jobs::JobCtx;
 use crate::pdfwriter::{self, InvisiblePage, InvisibleWord};
 use crate::storage::{self, JobDir, stem};
 
-/// Nomes dos idiomas mais comuns do Tesseract (código → nome em português).
+/// Nomes dos idiomas mais comuns do Tesseract (código → nome, em minúsculas
+/// como no meio de uma frase em português; traduzidos ao exibir).
 const LANGUAGE_NAMES: &[(&str, &str)] = &[
-    ("por", "Português"),
-    ("eng", "Inglês"),
-    ("spa", "Espanhol"),
-    ("fra", "Francês"),
-    ("deu", "Alemão"),
-    ("ita", "Italiano"),
-    ("nld", "Holandês"),
-    ("cat", "Catalão"),
-    ("glg", "Galego"),
-    ("eus", "Basco"),
-    ("lat", "Latim"),
-    ("pol", "Polonês"),
-    ("ces", "Tcheco"),
-    ("slk", "Eslovaco"),
-    ("hun", "Húngaro"),
-    ("ron", "Romeno"),
-    ("swe", "Sueco"),
-    ("dan", "Dinamarquês"),
-    ("nor", "Norueguês"),
-    ("fin", "Finlandês"),
-    ("ell", "Grego"),
-    ("tur", "Turco"),
-    ("rus", "Russo"),
-    ("ukr", "Ucraniano"),
-    ("ara", "Árabe"),
-    ("heb", "Hebraico"),
-    ("hin", "Hindi"),
-    ("jpn", "Japonês"),
-    ("kor", "Coreano"),
-    ("chi_sim", "Chinês simplificado"),
-    ("chi_tra", "Chinês tradicional"),
-    ("vie", "Vietnamita"),
-    ("tha", "Tailandês"),
+    ("por", n_("português")),
+    ("eng", n_("inglês")),
+    ("spa", n_("espanhol")),
+    ("fra", n_("francês")),
+    ("deu", n_("alemão")),
+    ("ita", n_("italiano")),
+    ("nld", n_("holandês")),
+    ("cat", n_("catalão")),
+    ("glg", n_("galego")),
+    ("eus", n_("basco")),
+    ("lat", n_("latim")),
+    ("pol", n_("polonês")),
+    ("ces", n_("tcheco")),
+    ("slk", n_("eslovaco")),
+    ("hun", n_("húngaro")),
+    ("ron", n_("romeno")),
+    ("swe", n_("sueco")),
+    ("dan", n_("dinamarquês")),
+    ("nor", n_("norueguês")),
+    ("fin", n_("finlandês")),
+    ("ell", n_("grego")),
+    ("tur", n_("turco")),
+    ("rus", n_("russo")),
+    ("ukr", n_("ucraniano")),
+    ("ara", n_("árabe")),
+    ("heb", n_("hebraico")),
+    ("hin", n_("hindi")),
+    ("jpn", n_("japonês")),
+    ("kor", n_("coreano")),
+    ("chi_sim", n_("chinês simplificado")),
+    ("chi_tra", n_("chinês tradicional")),
+    ("vie", n_("vietnamita")),
+    ("tha", n_("tailandês")),
 ];
 
-/// Nome do idioma para a interface; códigos sem nome conhecido (`frk`,
-/// `script/Latin`…) aparecem como estão.
+/// Nome do idioma como aparece no meio de uma frase (“português”,
+/// “Portuguese”); códigos sem nome conhecido (`frk`, `script/Latin`…)
+/// aparecem como estão.
+pub fn language_name_in_text(code: &str) -> String {
+    LANGUAGE_NAMES.iter().find(|(c, _)| *c == code).map_or_else(|| code.to_string(), |(_, n)| tr(n).to_string())
+}
+
+/// Nome do idioma sozinho, com inicial maiúscula (“Português”).
 pub fn language_name(code: &str) -> String {
-    LANGUAGE_NAMES.iter().find(|(c, _)| *c == code).map_or_else(|| code.to_string(), |(_, n)| n.to_string())
+    let name = language_name_in_text(code);
+    let mut chars = name.chars();
+    chars.next().map_or_else(String::new, |first| first.to_uppercase().chain(chars).collect())
 }
 
 /// Idiomas instalados para o Tesseract, com os mais comuns primeiro
@@ -132,12 +142,12 @@ pub(super) struct Engine {
 
 pub(super) fn engine(opts: &OcrOptions, ctx: &JobCtx) -> OpResult<Engine> {
     if opts.languages.is_empty() {
-        return Err(OpError::InvalidRange("Escolha pelo menos um idioma do documento.".into()));
+        return Err(OpError::InvalidRange(tr!("Escolha pelo menos um idioma do documento.").into()));
     }
     let installed = tesseract::languages(&ctx.cancel)?;
     if let Some(code) = opts.languages.iter().find(|c| !installed.contains(c)) {
         return Err(OpError::MissingOcrLanguage {
-            language: language_name(code).to_lowercase(),
+            language: language_name_in_text(code),
             install: language_install(code),
         });
     }
@@ -158,9 +168,10 @@ pub(super) struct Searchable {
 }
 
 /// Aviso que acompanha todo resultado de OCR.
-pub(super) const CAVEAT: &str = "O reconhecimento automático pode errar letras e números, principalmente em \
-                                 digitalizações tortas, manchadas ou com letra pequena. Confira trechos \
-                                 importantes antes de copiar ou confiar na busca.";
+pub(super) fn caveat() -> &'static str {
+    tr!("O reconhecimento automático pode errar letras e números, principalmente em digitalizações tortas, \
+         manchadas ou com letra pequena. Confira trechos importantes antes de copiar ou confiar na busca.")
+}
 
 /// Reconhece as páginas de `input` (as sem texto, se `skip_text_pages`) e
 /// grava em `job` o PDF com a camada de texto. `None` quando não havia o que
@@ -173,7 +184,7 @@ pub(super) fn searchable(
     ctx: &JobCtx,
     (i, n): (usize, usize),
 ) -> OpResult<Option<Searchable>> {
-    ctx.report(i as f64 / n as f64, &format!("Analisando {}", stem(input)));
+    ctx.report(i as f64 / n as f64, &tr!("Analisando {file}", file = stem(input)));
     let total = qpdf::page_count(input, &ctx.cancel)?;
     let sizes = poppler::page_sizes(input, total, &ctx.cancel)?;
     let texts = poppler::texts_per_page(input, total, &ctx.cancel)?;
@@ -186,12 +197,12 @@ pub(super) fn searchable(
     let tilted: Vec<f32> = reads.iter().filter_map(|r| r.skew).collect();
     let layers: Vec<InvisiblePage> = reads.into_iter().map(|r| r.layer).collect();
 
-    ctx.report((i as f64 + 0.97) / n as f64, &format!("Montando {}", stem(input)));
+    ctx.report((i as f64 + 0.97) / n as f64, &tr!("Montando {file}", file = stem(input)));
     // O qpdf encaixa cada página da camada na página de destino, então o
     // arredondamento de pixels da renderização não desloca o texto.
     let layer_pdf = job.file("camada-texto.pdf");
     pdfwriter::invisible_text_pdf(&layer_pdf, &layers, &engine.font)
-        .map_err(|e| OpError::io("gravar a camada de texto temporária", e))?;
+        .map_err(|e| OpError::io(tr!("gravar a camada de texto temporária"), e))?;
     let mut tmp = job.file("ocr.pdf");
     qpdf::overlay_pages(input, &layer_pdf, &pages, &tmp, &ctx.cancel)?;
     let mut turned: Vec<(i32, Vec<u32>)> = Vec::new();
@@ -213,10 +224,10 @@ pub(super) fn searchable(
     let after = poppler::texts_per_page(&tmp, total, &ctx.cancel)?;
     let recognized = pages.iter().filter(|&&p| has_text(&after[p as usize - 1])).count();
     if recognized == 0 {
-        return Err(OpError::OutputInvalid(format!(
-            "nenhum texto foi reconhecido em “{}”. Confira se o idioma escolhido é o do documento e se a \
+        return Err(OpError::OutputInvalid(tr!(
+            "nenhum texto foi reconhecido em “{file}”. Confira se o idioma escolhido é o do documento e se a \
              digitalização está legível",
-            human::file_name(input)
+            file = human::file_name(input)
         )));
     }
     Ok(Some(Searchable {
@@ -231,36 +242,42 @@ pub(super) fn searchable(
 
 /// ““x.pdf”: texto reconhecido em 3 de 4 páginas analisadas. …”
 pub(super) fn summary(input: &Path, s: &Searchable, skip_text_pages: bool) -> String {
-    let mut note = format!(
-        "“{}”: texto reconhecido em {} de {}.",
-        human::file_name(input),
-        s.recognized,
-        human::plural(s.analyzed, "página analisada", "páginas analisadas")
-    );
+    let mut parts = vec![trn!(
+        s.analyzed,
+        "“{file}”: texto reconhecido em {recognized} de {analyzed} página analisada.",
+        "“{file}”: texto reconhecido em {recognized} de {analyzed} páginas analisadas.",
+        file = human::file_name(input),
+        recognized = s.recognized,
+        analyzed = s.analyzed
+    )];
     if s.turned > 0 {
-        note.push_str(&if s.turned == 1 {
-            " 1 página estava deitada ou de cabeça para baixo e foi girada.".to_string()
-        } else {
-            format!(" {} páginas estavam deitadas ou de cabeça para baixo e foram giradas.", s.turned)
-        });
+        parts.push(trn!(
+            s.turned,
+            "{n} página estava deitada ou de cabeça para baixo e foi girada.",
+            "{n} páginas estavam deitadas ou de cabeça para baixo e foram giradas.",
+            n = s.turned
+        ));
     }
     if !s.tilted.is_empty() {
         let max = s.tilted.iter().fold(0.0f32, |m, a| m.max(a.abs()));
         let angle = human::decimal(f64::from(max), 1);
-        note.push_str(&if s.tilted.len() == 1 {
-            format!(" 1 página estava torta ({angle}°) e foi lida numa cópia endireitada.")
-        } else {
-            format!(" {} páginas estavam tortas (até {angle}°) e foram lidas em cópias endireitadas.", s.tilted.len())
-        });
+        parts.push(trn!(
+            s.tilted.len(),
+            "{n} página estava torta ({angle}°) e foi lida numa cópia endireitada.",
+            "{n} páginas estavam tortas (até {angle}°) e foram lidas em cópias endireitadas.",
+            n = s.tilted.len(),
+            angle
+        ));
     }
     if skip_text_pages && s.already > 0 {
-        note.push_str(&if s.already == 1 {
-            " 1 página já tinha texto e ficou como estava.".to_string()
-        } else {
-            format!(" {} páginas já tinham texto e ficaram como estavam.", s.already)
-        });
+        parts.push(trn!(
+            s.already,
+            "{n} página já tinha texto e ficou como estava.",
+            "{n} páginas já tinham texto e ficaram como estavam.",
+            n = s.already
+        ));
     }
-    note
+    parts.join(" ")
 }
 
 pub fn ocr(inputs: &[PathBuf], opts: OcrOptions, dest: &Destination, ctx: &JobCtx) -> OpResult<Outcome> {
@@ -272,10 +289,10 @@ pub fn ocr(inputs: &[PathBuf], opts: OcrOptions, dest: &Destination, ctx: &JobCt
     let mut outcome = batch(inputs, |i, input, outcome| {
         let job = JobDir::new()?;
         let Some(done) = searchable(input, &opts, &engine, &job, ctx, (i, n))? else {
-            outcome.notes.push(format!(
-                "“{}” já tem texto selecionável em todas as páginas; não havia o que reconhecer e nenhum arquivo \
-                 foi criado.",
-                human::file_name(input)
+            outcome.notes.push(tr!(
+                "“{file}” já tem texto selecionável em todas as páginas; não havia o que reconhecer e nenhum \
+                 arquivo foi criado.",
+                file = human::file_name(input)
             ));
             return Ok(());
         };
@@ -286,7 +303,7 @@ pub fn ocr(inputs: &[PathBuf], opts: OcrOptions, dest: &Destination, ctx: &JobCt
         Ok(())
     })?;
     if !outcome.outputs.is_empty() {
-        outcome.notes.push(CAVEAT.into());
+        outcome.notes.push(caveat().into());
     }
     Ok(outcome)
 }
@@ -384,7 +401,9 @@ fn attempt(
         None => (img, None),
     };
     let image = job.file(&format!("p{page}-{rotation}.pgm"));
-    img.save(&image).map_err(|e| OpError::OutputInvalid(format!("não foi possível preparar a página {page}: {e}")))?;
+    img.save(&image).map_err(|e| {
+        OpError::OutputInvalid(tr!("não foi possível preparar a página {page}: {error}", page, error = e))
+    })?;
     drop(img);
     // A partir daqui o arquivo é apagado junto com a tentativa.
     let mut result = Attempt { rotation, skew: tilt, text: Default::default(), image };
@@ -411,7 +430,7 @@ struct PageRead {
 /// de novo, e a melhor leitura vence.
 fn read_page(image: &Path, page: u32, langs: &str, dpi: u32, job: &JobDir, ctx: &JobCtx) -> OpResult<PageRead> {
     let original = image::open(image)
-        .map_err(|_| OpError::OutputInvalid(format!("imagem da página {page} ilegível")))?
+        .map_err(|_| OpError::OutputInvalid(tr!("imagem da página {page} ilegível", page)))?
         .into_luma8();
     let dims = original.dimensions();
     let lines_flat = deskew::analyze(&original);
@@ -476,7 +495,14 @@ fn recognize(
     let report = |done: usize| {
         ctx.report(
             (file_index as f64 + 0.95 * done as f64 / count as f64) / file_count as f64,
-            &format!("{}: reconhecendo {done} de {}", stem(input), human::plural(count, "página", "páginas")),
+            &trn!(
+                count,
+                "{file}: reconhecendo {done} de {count} página",
+                "{file}: reconhecendo {done} de {count} páginas",
+                file = stem(input),
+                done,
+                count
+            ),
         );
     };
     report(0);

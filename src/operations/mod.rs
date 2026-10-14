@@ -21,7 +21,10 @@ pub use crate::stamp::{NumberFormat, NumberStyle, Position, WatermarkStyle};
 pub use compress::{CUSTOM_DPI, CompressLevel, Estimate, estimate as estimate_compression};
 pub use convert::OFFICE_EXTENSIONS;
 pub use edit::{DocFields, MetadataChange, unsupported_chars};
-pub use ocr::{OcrOptions, installed_languages, language_install, language_name, pages_with_text, text_pages};
+pub use ocr::{
+    OcrOptions, installed_languages, language_install, language_name, language_name_in_text, pages_with_text,
+    text_pages,
+};
 pub use organize::PageItem;
 pub use security::{Restrictions, UnlockedCopy, unlocked_copy};
 
@@ -204,10 +207,16 @@ fn batch_output_name(dest: &Destination, batch_size: usize, suggested: &str, ext
 fn verify_pdf(path: &Path, expected_pages: u32, ctx: &JobCtx) -> OpResult<()> {
     let got = qpdf::page_count(path, &ctx.cancel).map_err(|e| match e {
         OpError::Cancelled => e,
-        other => OpError::OutputInvalid(format!("o PDF gerado não pôde ser lido ({})", other.technical())),
+        other => OpError::OutputInvalid(tr!("o PDF gerado não pôde ser lido ({detail})", detail = other.technical())),
     })?;
     if got != expected_pages {
-        return Err(OpError::OutputInvalid(format!("esperava {expected_pages} página(s), mas o arquivo tem {got}")));
+        return Err(OpError::OutputInvalid(trn!(
+            expected_pages as usize,
+            "esperava {expected_pages} página, mas o arquivo tem {got}",
+            "esperava {expected_pages} páginas, mas o arquivo tem {got}",
+            expected_pages,
+            got
+        )));
     }
     Ok(())
 }
@@ -288,5 +297,5 @@ fn parallel_map<T: Sync, R: Send>(
         .unwrap_or_else(PoisonError::into_inner)
         .into_iter()
         .collect::<Option<Vec<R>>>()
-        .ok_or_else(|| OpError::OutputInvalid("faltou o resultado de alguma página".into()))
+        .ok_or_else(|| OpError::OutputInvalid(tr!("faltou o resultado de alguma página").into()))
 }

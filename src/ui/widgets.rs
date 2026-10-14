@@ -39,12 +39,12 @@ fn filter_for(accepts: Accepts) -> gtk::FileFilter {
     let filter = gtk::FileFilter::new();
     match accepts {
         Accepts::Pdf => {
-            filter.set_name(Some("Documentos PDF"));
+            filter.set_name(Some(tr!("Documentos PDF")));
             filter.add_mime_type("application/pdf");
             filter.add_suffix("pdf");
         }
         Accepts::Images => {
-            filter.set_name(Some("Imagens"));
+            filter.set_name(Some(tr!("Imagens")));
             for ext in catalog::IMAGE_EXTENSIONS {
                 filter.add_suffix(ext);
             }
@@ -53,7 +53,7 @@ fn filter_for(accepts: Accepts) -> gtk::FileFilter {
             }
         }
         Accepts::Office => {
-            filter.set_name(Some("Documentos, planilhas e apresentações"));
+            filter.set_name(Some(tr!("Documentos, planilhas e apresentações")));
             for ext in catalog::OFFICE_EXTENSIONS {
                 filter.add_suffix(ext);
             }
@@ -78,7 +78,7 @@ pub async fn pick_files(parent: &impl IsA<gtk::Window>, accepts: Option<Accepts>
         }
         None => {
             let all = gtk::FileFilter::new();
-            all.set_name(Some("PDFs, imagens e documentos"));
+            all.set_name(Some(tr!("PDFs, imagens e documentos")));
             all.add_suffix("pdf");
             for ext in catalog::IMAGE_EXTENSIONS.iter().chain(catalog::OFFICE_EXTENSIONS) {
                 all.add_suffix(ext);
@@ -91,16 +91,16 @@ pub async fn pick_files(parent: &impl IsA<gtk::Window>, accepts: Option<Accepts>
     }
     dialog.set_filters(Some(&filters));
     if multiple {
-        dialog.set_title("Adicionar arquivos");
+        dialog.set_title(tr!("Adicionar arquivos"));
         dialog.open_multiple_future(Some(parent)).await.map(|m| files_from_model(&m)).unwrap_or_default()
     } else {
-        dialog.set_title("Escolher arquivo");
+        dialog.set_title(tr!("Escolher arquivo"));
         dialog.open_future(Some(parent)).await.ok().and_then(|f| f.path()).into_iter().collect()
     }
 }
 
 pub async fn pick_folder(parent: &impl IsA<gtk::Window>, initial: Option<&Path>) -> Option<PathBuf> {
-    let dialog = gtk::FileDialog::builder().title("Escolher pasta de destino").modal(true).build();
+    let dialog = gtk::FileDialog::builder().title(tr!("Escolher pasta de destino")).modal(true).build();
     if let Some(dir) = initial {
         dialog.set_initial_folder(Some(&gio::File::for_path(dir)));
     }
@@ -154,7 +154,7 @@ pub fn icon_button(icon: &str, tooltip: &str) -> gtk::Button {
 pub fn path_label(path: &Path) -> String {
     let home = glib::home_dir();
     match path.strip_prefix(&home) {
-        Ok(rest) if rest.as_os_str().is_empty() => "Pasta pessoal".into(),
+        Ok(rest) if rest.as_os_str().is_empty() => tr!("Pasta pessoal").into(),
         Ok(rest) => format!("~/{}", rest.to_string_lossy()),
         Err(_) => path.to_string_lossy().into_owned(),
     }

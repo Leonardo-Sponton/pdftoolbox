@@ -106,7 +106,7 @@ pub fn recognize(image: &Path, out_base: &Path, langs: &str, dpi: u32, cancel: &
     run_ok(Tool::Tesseract, args, &[0], cancel)?;
     let produced = out_base.with_extension("tsv");
     let tsv = std::fs::read_to_string(&produced)
-        .map_err(|_| OpError::OutputInvalid("o Tesseract não gerou o resultado do reconhecimento".into()))?;
+        .map_err(|_| OpError::OutputInvalid(tr!("o Tesseract não gerou o resultado do reconhecimento").into()))?;
     Ok(Recognition { lines: parse_tsv(&tsv) })
 }
 
@@ -168,7 +168,8 @@ pub fn glyphless_font(cancel: &CancelToken) -> OpResult<Vec<u8>> {
         }
     }
     Err(OpError::OutputInvalid(
-        "a fonte da camada de texto do Tesseract (pdf.ttf) não foi encontrada; reinstale o pacote do Tesseract".into(),
+        tr!("a fonte da camada de texto do Tesseract (pdf.ttf) não foi encontrada; reinstale o pacote do Tesseract")
+            .into(),
     ))
 }
 

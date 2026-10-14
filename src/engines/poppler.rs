@@ -35,7 +35,7 @@ fn produced(path: PathBuf, page: u32) -> OpResult<PathBuf> {
     if path.is_file() {
         Ok(path)
     } else {
-        Err(OpError::OutputInvalid(format!("o pdftoppm não gerou a página {page}")))
+        Err(OpError::OutputInvalid(tr!("o pdftoppm não gerou a página {page}", page)))
     }
 }
 
@@ -98,7 +98,7 @@ pub fn thumbnails(
     // O pdftoppm numera como prefixo-N.png com zeros à esquerda conforme o
     // total de páginas do documento; aceitamos qualquer largura de padding.
     let mut found: Vec<(u32, PathBuf)> = std::fs::read_dir(dir)
-        .map_err(|e| OpError::io("ler miniaturas", e))?
+        .map_err(|e| OpError::io(tr!("ler miniaturas"), e))?
         .filter_map(std::result::Result::ok)
         .filter_map(|e| {
             let name = e.file_name().to_string_lossy().into_owned();
@@ -117,7 +117,7 @@ pub fn page_size(pdf: &Path, page: u32, cancel: &CancelToken) -> OpResult<(f32, 
     args.push(pdf.into());
     let out = run_ok(Tool::Pdfinfo, args, &[0], cancel)?;
     parse_page_size(&String::from_utf8_lossy(&out.stdout), page)
-        .ok_or_else(|| OpError::OutputInvalid(format!("o pdfinfo não informou o tamanho da página {page}")))
+        .ok_or_else(|| OpError::OutputInvalid(tr!("o pdfinfo não informou o tamanho da página {page}", page)))
 }
 
 /// Tamanho exibido de todas as páginas, em uma única chamada ao `pdfinfo`.
@@ -129,7 +129,7 @@ pub fn page_sizes(pdf: &Path, total: u32, cancel: &CancelToken) -> OpResult<Vec<
     (1..=total)
         .map(|page| {
             parse_page_size(&text, page)
-                .ok_or_else(|| OpError::OutputInvalid(format!("o pdfinfo não informou o tamanho da página {page}")))
+                .ok_or_else(|| OpError::OutputInvalid(tr!("o pdfinfo não informou o tamanho da página {page}", page)))
         })
         .collect()
 }

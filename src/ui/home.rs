@@ -52,9 +52,9 @@ impl ToolCard {
         self.button.set_sensitive(ok);
         self.reason.set_visible(!ok);
         self.reason.set_text(match self.info.accepts {
-            Accepts::Pdf => "Só aceita PDFs",
-            Accepts::Images => "Só aceita imagens",
-            Accepts::Office => "Só aceita documentos, planilhas e apresentações",
+            Accepts::Pdf => tr!("Só aceita PDFs"),
+            Accepts::Images => tr!("Só aceita imagens"),
+            Accepts::Office => tr!("Só aceita documentos, planilhas e apresentações"),
         });
         let is_suggested = ok && suggested == Some(self.info.id);
         self.badge.set_visible(is_suggested);
@@ -93,35 +93,34 @@ fn staged_title(files: &[PathBuf]) -> String {
     let (pdfs, images, office) = (count(Accepts::Pdf), count(Accepts::Images), count(Accepts::Office));
     let mut parts = Vec::new();
     if pdfs > 0 {
-        parts.push(format!("{pdfs} PDF{}", if pdfs > 1 { "s" } else { "" }));
+        parts.push(trn!(pdfs, "{n} PDF", "{n} PDFs", n = pdfs));
     }
     if images > 0 {
-        parts.push(format!("{images} {}", if images > 1 { "imagens" } else { "imagem" }));
+        parts.push(trn!(images, "{n} imagem", "{n} imagens", n = images));
     }
     if office > 0 {
-        parts.push(format!("{office} documento{}", if office > 1 { "s" } else { "" }));
+        parts.push(trn!(office, "{n} documento", "{n} documentos", n = office));
     }
     let list = match parts.as_slice() {
         [] => String::new(),
         [one] => one.clone(),
-        [init @ .., last] => format!("{} e {last}", init.join(", ")),
+        [init @ .., last] => tr!("{first} e {last}", first = init.join(", "), last),
     };
     // “imagem” é feminino; com outros tipos na mistura, o plural fica no masculino.
     let feminine = images == files.len();
-    let ready = match (files.len() > 1, feminine) {
-        (false, true) => "pronta",
-        (false, false) => "pronto",
-        (true, true) => "prontas",
-        (true, false) => "prontos",
-    };
-    format!("{list} {ready}")
+    match (files.len() > 1, feminine) {
+        (false, true) => tr!("{list} pronta", list),
+        (false, false) => tr!("{list} pronto", list),
+        (true, true) => tr!("{list} prontas", list),
+        (true, false) => tr!("{list} prontos", list),
+    }
 }
 
 fn tool_card(info: &'static ToolInfo, on_click: impl Fn(&'static ToolInfo) + 'static) -> ToolCard {
     let icon = gtk::Image::builder().icon_name(info.icon).pixel_size(28).halign(gtk::Align::Start).build();
     icon.add_css_class("tool-icon");
     let badge = gtk::Label::builder()
-        .label("Sugerida")
+        .label(tr!("Sugerida"))
         .halign(gtk::Align::End)
         .valign(gtk::Align::Start)
         .hexpand(true)
@@ -133,10 +132,10 @@ fn tool_card(info: &'static ToolInfo, on_click: impl Fn(&'static ToolInfo) + 'st
     top.append(&icon);
     top.append(&badge);
     // Larguras máximas limitam a largura natural, para o FlowBox caber 2–3 colunas.
-    let title = gtk::Label::builder().label(info.title).xalign(0.0).wrap(true).max_width_chars(24).build();
+    let title = gtk::Label::builder().label(info.title()).xalign(0.0).wrap(true).max_width_chars(24).build();
     title.add_css_class("heading");
     let summary = gtk::Label::builder()
-        .label(info.summary)
+        .label(info.summary())
         .xalign(0.0)
         .wrap(true)
         .wrap_mode(gtk::pango::WrapMode::WordChar)
@@ -157,7 +156,11 @@ fn tool_card(info: &'static ToolInfo, on_click: impl Fn(&'static ToolInfo) + 'st
     content.append(&reason);
     let missing: Vec<&str> = info.needs.iter().filter(|t| t.find().is_none()).map(|t| t.label()).collect();
     if !missing.is_empty() {
-        let warn = gtk::Label::builder().label(format!("Requer {}", missing.join(", "))).xalign(0.0).wrap(true).build();
+        let warn = gtk::Label::builder()
+            .label(tr!("Requer {programs}", programs = missing.join(", ")))
+            .xalign(0.0)
+            .wrap(true)
+            .build();
         warn.add_css_class("warning");
         warn.add_css_class("caption");
         content.append(&warn);
@@ -166,8 +169,8 @@ fn tool_card(info: &'static ToolInfo, on_click: impl Fn(&'static ToolInfo) + 'st
     button.add_css_class("card");
     button.add_css_class("tool-card");
     button.update_property(&[
-        gtk::accessible::Property::Label(info.title),
-        gtk::accessible::Property::Description(info.summary),
+        gtk::accessible::Property::Label(info.title()),
+        gtk::accessible::Property::Description(info.summary()),
     ]);
     button.connect_clicked(move |_| on_click(info));
     let child = gtk::FlowBoxChild::new();
@@ -201,20 +204,21 @@ fn section(title: &str) -> (gtk::Box, gtk::FlowBox) {
 impl Home {
     pub fn build(app: &Rc<AppState>) -> Rc<Home> {
         let header = adw::HeaderBar::new();
-        let open_button = gtk::Button::builder().label("Abrir").tooltip_text("Abrir arquivos (Ctrl+O)").build();
+        let open_button =
+            gtk::Button::builder().label(tr!("Abrir")).tooltip_text(tr!("Abrir arquivos (Ctrl+O)")).build();
         header.pack_start(&open_button);
         header.pack_end(&primary_menu());
-        let tasks_button = widgets::icon_button("view-list-bullet-symbolic", "Tarefas (Ctrl+T)");
+        let tasks_button = widgets::icon_button("view-list-bullet-symbolic", tr!("Tarefas (Ctrl+T)"));
         tasks_button.set_action_name(Some("win.tasks"));
         header.pack_end(&tasks_button);
         let search_toggle = gtk::ToggleButton::builder()
             .icon_name("system-search-symbolic")
-            .tooltip_text("Buscar ferramentas (Ctrl+F)")
+            .tooltip_text(tr!("Buscar ferramentas (Ctrl+F)"))
             .build();
         header.pack_end(&search_toggle);
 
         let search = gtk::SearchEntry::builder()
-            .placeholder_text("Buscar ferramenta — por exemplo: juntar, jpg, girar")
+            .placeholder_text(tr!("Buscar ferramenta — por exemplo: juntar, jpg, girar"))
             .hexpand(true)
             .build();
         let search_bar =
@@ -227,18 +231,18 @@ impl Home {
         let drop_icon = gtk::Image::builder().icon_name("document-open-symbolic").pixel_size(48).build();
         drop_icon.add_css_class("dim-label");
         let drop_title = gtk::Label::builder()
-            .label("Arraste PDFs ou imagens para cá")
+            .label(tr!("Arraste PDFs ou imagens para cá"))
             .wrap(true)
             .justify(gtk::Justification::Center)
             .build();
         drop_title.add_css_class("title-3");
         let drop_sub = gtk::Label::builder()
-            .label("Tudo é processado neste computador. Nenhum arquivo é enviado para a internet.")
+            .label(tr!("Tudo é processado neste computador. Nenhum arquivo é enviado para a internet."))
             .wrap(true)
             .justify(gtk::Justification::Center)
             .build();
         drop_sub.add_css_class("dim-label");
-        let pick = gtk::Button::builder().label("Escolher arquivos…").halign(gtk::Align::Center).build();
+        let pick = gtk::Button::builder().label(tr!("Escolher arquivos…")).halign(gtk::Align::Center).build();
         pick.add_css_class("pill");
         pick.add_css_class("suggested-action");
         let empty_box = gtk::Box::new(gtk::Orientation::Vertical, 8);
@@ -253,15 +257,15 @@ impl Home {
         staged_title.add_css_class("title-3");
         staged_title.add_css_class("titulo-pagina");
         let staged_sub = gtk::Label::builder()
-            .label("Escolha uma ferramenta abaixo. As que não aceitam esses arquivos ficam esmaecidas; arraste mais arquivos para cá a qualquer momento.")
+            .label(tr!("Escolha uma ferramenta abaixo. As que não aceitam esses arquivos ficam esmaecidas; arraste mais arquivos para cá a qualquer momento."))
             .xalign(0.0)
             .wrap(true)
             .build();
         staged_sub.add_css_class("dim-label");
-        let add_more = gtk::Button::builder().label("Adicionar mais…").valign(gtk::Align::Center).build();
-        let clear_button = gtk::Button::builder().label("Limpar").valign(gtk::Align::Center).build();
+        let add_more = gtk::Button::builder().label(tr!("Adicionar mais…")).valign(gtk::Align::Center).build();
+        let clear_button = gtk::Button::builder().label(tr!("Limpar")).valign(gtk::Align::Center).build();
         clear_button.add_css_class("flat");
-        clear_button.set_tooltip_text(Some("Tirar todos os arquivos da lista (nada é apagado do disco)"));
+        clear_button.set_tooltip_text(Some(tr!("Tirar todos os arquivos da lista (nada é apagado do disco)")));
         let head_text = gtk::Box::new(gtk::Orientation::Vertical, 4);
         head_text.set_hexpand(true);
         head_text.append(&staged_title);
@@ -317,13 +321,13 @@ impl Home {
         body.set_margin_end(16);
         body.append(&drop_zone);
 
-        let (recent_section, recent_box) = section("Usadas recentemente");
+        let (recent_section, recent_box) = section(tr!("Usadas recentemente"));
         body.append(&recent_section);
 
         let no_results = adw::StatusPage::builder()
             .icon_name("system-search-symbolic")
-            .title("Nenhuma ferramenta encontrada")
-            .description("Tente outras palavras, como “unir”, “jpg” ou “reduzir”.")
+            .title(tr!("Nenhuma ferramenta encontrada"))
+            .description(tr!("Tente outras palavras, como “unir”, “jpg” ou “reduzir”."))
             .visible(false)
             .build();
         body.append(&no_results);
@@ -347,7 +351,7 @@ impl Home {
                 sections.push((cat, sec));
             }
             let note = gtk::Label::builder()
-                .label("Próximas ferramentas no roteiro do projeto: redação definitiva, formulários, PDF/A e comparação de documentos.")
+                .label(tr!("Próximas ferramentas no roteiro do projeto: redação definitiva, formulários, PDF/A e comparação de documentos."))
                 .wrap(true)
                 .xalign(0.0)
                 .build();
@@ -440,6 +444,11 @@ impl Home {
         home
     }
 
+    /// Arquivos escolhidos e ainda não levados a uma ferramenta.
+    pub fn staged_files(&self) -> Vec<PathBuf> {
+        self.staged.borrow().clone()
+    }
+
     pub fn focus_search(&self) {
         self.search_bar.set_search_mode(true);
         self.search.grab_focus();
@@ -505,8 +514,9 @@ impl Home {
         if let Some(id) = suggested {
             let info = catalog::info(id);
             self.suggest_content.set_icon_name(info.icon);
-            self.suggest_content.set_label(info.title);
-            self.suggest.set_tooltip_text(Some(&format!("Sugestão para estes arquivos: {}", info.summary)));
+            self.suggest_content.set_label(info.title());
+            self.suggest
+                .set_tooltip_text(Some(&tr!("Sugestão para estes arquivos: {summary}", summary = info.summary())));
         }
         for card in self.cards.borrow().iter().chain(self.recent_cards.borrow().iter()) {
             card.reflect(&files, suggested);
@@ -534,7 +544,7 @@ impl Home {
         } else {
             holder.append(&thumb);
         }
-        let remove = widgets::icon_button("window-close-symbolic", "Tirar da lista");
+        let remove = widgets::icon_button("window-close-symbolic", tr!("Tirar da lista"));
         // Com contorno e fundo próprio, visível sobre qualquer miniatura e tema.
         remove.remove_css_class("flat");
         remove.add_css_class("circular");
@@ -550,7 +560,7 @@ impl Home {
             .build();
         name.add_css_class("nome");
         name.add_css_class("caption");
-        let facts = gtk::Label::builder().label("Lendo…").wrap(true).justify(gtk::Justification::Center).build();
+        let facts = gtk::Label::builder().label(tr!("Lendo…")).wrap(true).justify(gtk::Justification::Center).build();
         facts.add_css_class("caption");
         facts.add_css_class("dim-label");
         let card = gtk::Box::new(gtk::Orientation::Vertical, 6);

@@ -48,7 +48,7 @@ impl ToolPage {
     /// (ou português e inglês), entre os instalados.
     pub(super) fn load_text_ocr(&self, row: adw::SwitchRow, languages: Rc<RefCell<Vec<String>>>) {
         if Tool::Tesseract.find().is_none() {
-            row.set_subtitle(&format!("Requer o Tesseract: {}", Tool::Tesseract.install_command()));
+            row.set_subtitle(&tr!("Requer o Tesseract: {command}", command = Tool::Tesseract.install_command()));
             return;
         }
         let saved = self.saved_languages();
@@ -59,14 +59,19 @@ impl ToolPage {
                 chosen = installed.into_iter().take(1).collect();
             }
             if chosen.is_empty() {
-                row.set_subtitle("Nenhum idioma do Tesseract instalado");
+                row.set_subtitle(tr!("Nenhum idioma do Tesseract instalado"));
                 row.set_active(false);
                 return;
             }
-            let names: Vec<String> = chosen.iter().map(|c| operations::language_name(c).to_lowercase()).collect();
-            row.set_subtitle(&format!(
-                "Só nas páginas sem texto · em {} (idiomas da ferramenta OCR) · leva alguns segundos por página",
-                names.join(" e ")
+            let names: Vec<String> = chosen.iter().map(|c| operations::language_name_in_text(c)).collect();
+            let languages_text = match names.as_slice() {
+                [init @ .., last] if !init.is_empty() => tr!("{first} e {last}", first = init.join(", "), last),
+                _ => names.join(""),
+            };
+            row.set_subtitle(&tr!(
+                "Só nas páginas sem texto · em {languages} (idiomas da ferramenta OCR) · leva alguns segundos por \
+                 página",
+                languages = languages_text
             ));
             *languages.borrow_mut() = chosen;
             row.set_sensitive(true);
@@ -77,7 +82,7 @@ impl ToolPage {
     /// escolha é lembrada nas preferências.
     pub(super) fn load_languages(&self, rows: Rc<LanguageRows>, refresh: Rc<dyn Fn()>) {
         if !self.deps_ok {
-            rows.row.set_subtitle("O Tesseract não está instalado");
+            rows.row.set_subtitle(tr!("O Tesseract não está instalado"));
             return;
         }
         let saved = self.saved_languages();
@@ -108,11 +113,11 @@ impl ToolPage {
             }
             let example = if installed.iter().any(|c| c == "spa") { "fra" } else { "spa" };
             let more = widgets::plain_row(
-                "Outros idiomas",
-                &format!(
-                    "Instale os dados do Tesseract do idioma e reabra esta ferramenta. Exemplo ({}): {}",
-                    operations::language_name(example).to_lowercase(),
-                    operations::language_install(example)
+                tr!("Outros idiomas"),
+                &tr!(
+                    "Instale os dados do Tesseract do idioma e reabra esta ferramenta. Exemplo ({language}): {command}",
+                    language = operations::language_name_in_text(example),
+                    command = operations::language_install(example)
                 ),
             );
             more.set_subtitle_selectable(true);
@@ -203,7 +208,7 @@ impl ToolPage {
         let generation = c.restart();
         // O valor anterior não vale mais para a nova resolução.
         if !self.files.borrow().is_empty() {
-            c.show_calculating("Calculando…");
+            c.show_calculating(tr!("Calculando…"));
         }
         let page = Rc::downgrade(self);
         glib::timeout_add_local_once(Duration::from_millis(500), move || {
@@ -228,7 +233,7 @@ impl ToolPage {
         c.spinner.set_visible(false);
         c.spinner.set_spinning(false);
         if files.is_empty() || missing_tool {
-            c.estimate.set_subtitle("Adicione um arquivo para ver a estimativa.");
+            c.estimate.set_subtitle(tr!("Adicione um arquivo para ver a estimativa."));
             return;
         }
         let todo: Vec<PathBuf> =
@@ -241,9 +246,9 @@ impl ToolPage {
             return;
         }
         c.show_calculating(if files.len() == 1 {
-            "Calculando… (comprimindo algumas páginas numa pasta temporária)"
+            tr!("Calculando… (comprimindo algumas páginas numa pasta temporária)")
         } else {
-            "Calculando… (comprimindo algumas páginas de cada arquivo numa pasta temporária)"
+            tr!("Calculando… (comprimindo algumas páginas de cada arquivo numa pasta temporária)")
         });
         let cancel = CancelToken::new();
         c.pending.replace(Some(cancel.clone()));

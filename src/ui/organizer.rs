@@ -70,29 +70,29 @@ fn action_bar() -> (gtk::ActionBar, gtk::Label, gtk::Button) {
         b
     };
     for b in [
-        button("object-rotate-left-symbolic", "Girar seleção à esquerda (Ctrl+Shift+R)", "page.rotate-left"),
-        button("object-rotate-right-symbolic", "Girar seleção à direita (Ctrl+R)", "page.rotate-right"),
-        button("edit-copy-symbolic", "Duplicar seleção (Ctrl+D)", "page.duplicate"),
-        button("user-trash-symbolic", "Excluir seleção (Delete)", "page.delete"),
+        button("object-rotate-left-symbolic", tr!("Girar seleção à esquerda (Ctrl+Shift+R)"), "page.rotate-left"),
+        button("object-rotate-right-symbolic", tr!("Girar seleção à direita (Ctrl+R)"), "page.rotate-right"),
+        button("edit-copy-symbolic", tr!("Duplicar seleção (Ctrl+D)"), "page.duplicate"),
+        button("user-trash-symbolic", tr!("Excluir seleção (Delete)"), "page.delete"),
         button(
             "document-new-symbolic",
-            "Inserir página em branco depois da seleção, do tamanho da página anterior (Ctrl+B)",
+            tr!("Inserir página em branco depois da seleção, do tamanho da página anterior (Ctrl+B)"),
             "page.insert-blank",
         ),
     ] {
         action_bar.pack_start(&b);
     }
     action_bar.pack_start(&gtk::Separator::new(gtk::Orientation::Vertical));
-    action_bar.pack_start(&button("go-previous-symbolic", "Mover seleção para trás (Ctrl+←)", "page.move-left"));
-    action_bar.pack_start(&button("go-next-symbolic", "Mover seleção para frente (Ctrl+→)", "page.move-right"));
+    action_bar.pack_start(&button("go-previous-symbolic", tr!("Mover seleção para trás (Ctrl+←)"), "page.move-left"));
+    action_bar.pack_start(&button("go-next-symbolic", tr!("Mover seleção para frente (Ctrl+→)"), "page.move-right"));
     action_bar.pack_start(&gtk::Separator::new(gtk::Orientation::Vertical));
-    action_bar.pack_start(&button("zoom-in-symbolic", "Ampliar a página (espaço ou clique duplo)", "page.zoom"));
+    action_bar.pack_start(&button("zoom-in-symbolic", tr!("Ampliar a página (espaço ou clique duplo)"), "page.zoom"));
     let count = gtk::Label::new(None);
     count.add_css_class("dim-label");
     count.set_ellipsize(gtk::pango::EllipsizeMode::End);
     action_bar.set_center_widget(Some(&count));
-    action_bar.pack_end(&button("edit-select-all-symbolic", "Selecionar todas (Ctrl+A)", "page.select-all"));
-    let undo_button = button("edit-undo-symbolic", "Desfazer (Ctrl+Z)", "page.undo");
+    action_bar.pack_end(&button("edit-select-all-symbolic", tr!("Selecionar todas (Ctrl+A)"), "page.select-all"));
+    let undo_button = button("edit-undo-symbolic", tr!("Desfazer (Ctrl+Z)"), "page.undo");
     action_bar.pack_end(&undo_button);
     (action_bar, count, undo_button)
 }
@@ -113,15 +113,17 @@ pub fn build(app: &Rc<AppState>, files: Vec<PathBuf>) -> adw::NavigationPage {
         .valign(gtk::Align::Start)
         .activate_on_single_click(false)
         .build();
-    flow.update_property(&[gtk::accessible::Property::Label("Páginas do documento")]);
+    flow.update_property(&[gtk::accessible::Property::Label(tr!("Páginas do documento"))]);
     let grid_scroll =
         gtk::ScrolledWindow::builder().hscrollbar_policy(gtk::PolicyType::Never).child(&flow).vexpand(true).build();
     let (action_bar, count, undo_button) = action_bar();
     let empty = EmptyState {
         icon: "view-grid-symbolic",
-        title: "Escolha um PDF para organizar",
-        description: "Ou arraste o arquivo para esta janela. Você poderá reordenar, girar, duplicar, excluir e \
-                      inserir páginas em branco antes de salvar.",
+        title: tr!("Escolha um PDF para organizar"),
+        description: tr!(
+            "Ou arraste o arquivo para esta janela. Você poderá reordenar, girar, duplicar, excluir e inserir \
+             páginas em branco antes de salvar."
+        ),
         open_action: "page.add",
     };
     let (chrome, nav_page) = EditorChrome::new(info, &empty, &grid_scroll, action_bar);
@@ -291,7 +293,7 @@ impl Organizer {
     }
 
     fn start(self: &Rc<Self>, path: PathBuf, total: u32, dir: JobDir) {
-        self.chrome.set_title(&format!("Organizar — {}", human::file_name(&path)));
+        self.chrome.set_title(&tr!("Organizar — {file}", file = human::file_name(&path)));
         self.dest_dir.replace(unlock::original(&path).parent().map(Path::to_path_buf));
         self.total.set(total);
         self.items.replace((1..=total).map(|page| PageItem { page, rotation: 0 }).collect());
@@ -440,23 +442,25 @@ impl Organizer {
     fn update_cell(&self, cell: &PageCell, items: &[PageItem], pos: usize) {
         let item = &items[pos];
         self.set_picture(&cell.picture, self.texture_at(items, pos).as_ref(), item);
-        let mut text = format!("{}", pos + 1);
-        if item.is_blank() {
-            text.push_str(" · em branco");
-        } else if item.page as usize != pos + 1 {
-            text.push_str(&format!(" · pág. {}", item.page));
-        }
+        let position = pos + 1;
+        let text = if item.is_blank() {
+            tr!("{position} · em branco", position)
+        } else if item.page as usize != position {
+            tr!("{position} · pág. {page}", position, page = item.page)
+        } else {
+            position.to_string()
+        };
         cell.label.set_text(&text);
         let angle = item.rotation.rem_euclid(360);
         cell.rotation.set_visible(angle != 0);
         cell.rotation.set_text(&format!("↻ {angle}°"));
         let mut desc = if item.is_blank() {
-            format!("Posição {}, página em branco", pos + 1)
+            tr!("Posição {position}, página em branco", position)
         } else {
-            format!("Posição {}, página original {}", pos + 1, item.page)
+            tr!("Posição {position}, página original {page}", position, page = item.page)
         };
         if angle != 0 {
-            desc.push_str(&format!(", girada {angle} graus"));
+            desc.push_str(&tr!(", girada {angle} graus", angle));
         }
         cell.child.update_property(&[gtk::accessible::Property::Label(&desc)]);
     }
@@ -536,9 +540,9 @@ impl Organizer {
         let org = Rc::downgrade(self);
         editor::confirm_discard(
             &app,
-            "Descartar as alterações?",
-            "A nova ordem das páginas ainda não foi salva. O PDF original não foi alterado.",
-            "Continuar organizando",
+            tr!("Descartar as alterações?"),
+            tr!("A nova ordem das páginas ainda não foi salva. O PDF original não foi alterado."),
+            tr!("Continuar organizando"),
             move || {
                 if let Some(org) = org.upgrade() {
                     then(&org);
@@ -557,14 +561,14 @@ impl Organizer {
         self.remember();
         self.items.borrow_mut().insert(at, PageItem::blank());
         self.rebuild(&[at]);
-        self.toast("Página em branco inserida. Ctrl+Z desfaz.");
+        self.toast(tr!("Página em branco inserida. Ctrl+Z desfaz."));
     }
 
     /// Amplia a página `pos` (ou a que tem o foco, ou a primeira selecionada).
     fn zoom(self: &Rc<Self>, pos: Option<usize>) {
         let Some(path) = self.input.borrow().clone() else { return };
         let Some(start) = pos.or_else(|| self.focused()).or_else(|| self.selected().first().copied()) else {
-            self.toast("Escolha uma página para ampliar (clique duplo nela).");
+            self.toast(tr!("Escolha uma página para ampliar (clique duplo nela)."));
             return;
         };
         let items = self.items.borrow().clone();
@@ -576,11 +580,11 @@ impl Organizer {
                 page: it.page,
                 rotation: it.rotation,
                 label: if it.is_blank() {
-                    format!("{} de {n} · em branco", i + 1)
+                    tr!("{position} de {total} · em branco", position = i + 1, total = n)
                 } else if it.page as usize == i + 1 {
-                    format!("Página {} de {n}", i + 1)
+                    tr!("Página {page} de {total}", page = i + 1, total = n)
                 } else {
-                    format!("{} de {n} · página original {}", i + 1, it.page)
+                    tr!("{position} de {total} · página original {page}", position = i + 1, total = n, page = it.page)
                 },
                 texture: if it.is_blank() { self.texture_at(&items, i) } else { None },
             })
@@ -604,12 +608,14 @@ impl Organizer {
         let n = self.items.borrow().len();
         let sel = self.flow.selected_children().len();
         let loaded = self.textures.borrow().len() as u32;
-        let mut text = format!("{n} página{}", if n == 1 { "" } else { "s" });
+        let mut text = trn!(n, "{n} página", "{n} páginas", n);
         if sel > 0 {
-            text.push_str(&format!(" · {sel} selecionada{}", if sel == 1 { "" } else { "s" }));
+            text.push_str(" · ");
+            text.push_str(&trn!(sel, "{sel} selecionada", "{sel} selecionadas", sel));
         }
         if loaded < self.total.get() && self.loader.borrow().is_some() {
-            text.push_str(&format!(" · miniaturas {loaded}/{}", self.total.get()));
+            text.push_str(" · ");
+            text.push_str(&tr!("miniaturas {loaded}/{total}", loaded, total = self.total.get()));
         }
         self.count.set_text(&text);
     }
@@ -617,7 +623,7 @@ impl Organizer {
     fn need_selection(&self) -> Option<Vec<usize>> {
         let sel = self.selected();
         if sel.is_empty() {
-            self.toast("Selecione uma ou mais páginas primeiro (clique; Ctrl+clique para várias).");
+            self.toast(tr!("Selecione uma ou mais páginas primeiro (clique; Ctrl+clique para várias)."));
             None
         } else {
             Some(sel)
@@ -651,7 +657,7 @@ impl Organizer {
         let Some(sel) = self.need_selection() else { return };
         let originals_left = self.items.borrow().iter().enumerate().any(|(i, it)| !it.is_blank() && !sel.contains(&i));
         if !originals_left {
-            self.toast("O documento precisa manter pelo menos uma página original.");
+            self.toast(tr!("O documento precisa manter pelo menos uma página original."));
             return;
         }
         self.remember();
@@ -662,7 +668,12 @@ impl Organizer {
         let next = sel[0].min(items.len() - 1);
         self.items.replace(items);
         self.rebuild(&[next]);
-        self.toast(&format!("{} página(s) excluída(s). Ctrl+Z desfaz.", sel.len()));
+        self.toast(&trn!(
+            sel.len(),
+            "{n} página excluída. Ctrl+Z desfaz.",
+            "{n} páginas excluídas. Ctrl+Z desfaz.",
+            n = sel.len()
+        ));
     }
 
     fn undo(self: &Rc<Self>) {
@@ -730,7 +741,7 @@ impl Organizer {
         let Some(dir) = dir.or_else(|| self.dest_dir.borrow().clone()) else { return };
         // A ordem gravada (pode mudar durante a gravação).
         let pages = self.items.borrow().clone();
-        let title = format!("Organizar — {}", human::file_name(&input));
+        let title = tr!("Organizar — {file}", file = human::file_name(&input));
         let request = Request::Organize { input, pages: pages.clone() };
         self.saving.set(true);
         self.chrome.set_saving(true);

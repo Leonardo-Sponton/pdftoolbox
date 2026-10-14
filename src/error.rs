@@ -58,33 +58,34 @@ impl OpError {
         OpError::Io { context: context.into(), source }
     }
 
+    /// `action` é o que falhou, já traduzido e com `{file}` para o nome do arquivo.
     pub fn io_path(action: &str, path: &Path, source: io::Error) -> Self {
-        Self::io(format!("{action} “{}”", human::file_name(path)), source)
+        Self::io(crate::i18n::fill(action, &[("file", &human::file_name(path))]), source)
     }
 
     pub fn title(&self) -> &'static str {
         match self {
-            OpError::NoInput => "Nenhum arquivo selecionado",
-            OpError::MissingTool(_) | OpError::MissingOcrLanguage { .. } => "Dependência ausente",
-            OpError::InvalidPdf { .. } => "Documento inválido",
-            OpError::PasswordProtected(_) => "Documento protegido por senha",
-            OpError::WrongPassword(_) => "Senha incorreta",
-            OpError::OwnerPasswordRequired(_) => "É preciso a senha de permissões",
-            OpError::NotEncrypted(_) => "O documento não tem senha",
-            OpError::UnsupportedImage { .. } => "Imagem não suportada",
+            OpError::NoInput => tr!("Nenhum arquivo selecionado"),
+            OpError::MissingTool(_) | OpError::MissingOcrLanguage { .. } => tr!("Dependência ausente"),
+            OpError::InvalidPdf { .. } => tr!("Documento inválido"),
+            OpError::PasswordProtected(_) => tr!("Documento protegido por senha"),
+            OpError::WrongPassword(_) => tr!("Senha incorreta"),
+            OpError::OwnerPasswordRequired(_) => tr!("É preciso a senha de permissões"),
+            OpError::NotEncrypted(_) => tr!("O documento não tem senha"),
+            OpError::UnsupportedImage { .. } => tr!("Imagem não suportada"),
             OpError::InvalidRange(_) | OpError::PageOutOfRange { .. } | OpError::EmptySelection => {
-                "Seleção de páginas inválida"
+                tr!("Seleção de páginas inválida")
             }
             OpError::Io { source, .. } => match io_kind(source) {
-                IoKind::NoSpace => "Espaço em disco insuficiente",
-                IoKind::Permission => "Permissão insuficiente",
-                IoKind::ReadOnly => "Destino somente leitura",
-                IoKind::NotFound => "Arquivo não encontrado",
-                IoKind::Other => "Erro de leitura ou gravação",
+                IoKind::NoSpace => tr!("Espaço em disco insuficiente"),
+                IoKind::Permission => tr!("Permissão insuficiente"),
+                IoKind::ReadOnly => tr!("Destino somente leitura"),
+                IoKind::NotFound => tr!("Arquivo não encontrado"),
+                IoKind::Other => tr!("Erro de leitura ou gravação"),
             },
-            OpError::ToolFailed { .. } => "O motor de processamento falhou",
-            OpError::OutputInvalid(_) => "O resultado não passou na verificação",
-            OpError::Cancelled => "Operação cancelada",
+            OpError::ToolFailed { .. } => tr!("O motor de processamento falhou"),
+            OpError::OutputInvalid(_) => tr!("O resultado não passou na verificação"),
+            OpError::Cancelled => tr!("Operação cancelada"),
         }
     }
 
@@ -93,8 +94,11 @@ impl OpError {
         match self {
             OpError::Io { context, source } => format!("{context}: {source}"),
             OpError::ToolFailed { tool, code, stderr } => {
-                let code = code.map_or("sinal".to_string(), |c| c.to_string());
-                format!("{} saiu com código {code}\n{}", tool.program(), stderr.trim())
+                let status = match code {
+                    Some(code) => tr!("{program} saiu com código {code}", program = tool.program(), code),
+                    None => tr!("{program} foi encerrado por um sinal", program = tool.program()),
+                };
+                format!("{status}\n{}", stderr.trim())
             }
             OpError::InvalidPdf { detail, .. } | OpError::UnsupportedImage { detail, .. } => detail.clone(),
             other => format!("{other:?}"),
@@ -127,79 +131,74 @@ fn io_kind(e: &io::Error) -> IoKind {
 
 impl fmt::Display for OpError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            OpError::NoInput => write!(f, "Adicione pelo menos um arquivo para continuar."),
-            OpError::MissingTool(t) => write!(
-                f,
-                "Esta ferramenta precisa de “{}”, que não foi encontrado no sistema. \
+        let message = match self {
+            OpError::NoInput => tr!("Adicione pelo menos um arquivo para continuar.").to_string(),
+            OpError::MissingTool(t) => tr!(
+                "Esta ferramenta precisa de “{program}”, que não foi encontrado no sistema. \
                  Veja em Menu → Dependências como instalá-lo.",
-                t.label()
+                program = t.label()
             ),
-            OpError::InvalidPdf { file, .. } => {
-                write!(
-                    f,
-                    "“{}” não é um PDF válido ou está danificado demais para ser processado.",
-                    human::file_name(file)
-                )
-            }
-            OpError::PasswordProtected(file) => write!(
-                f,
-                "“{}” está protegido por senha. Adicione-o de novo à ferramenta e digite a senha \
+            OpError::InvalidPdf { file, .. } => tr!(
+                "“{file}” não é um PDF válido ou está danificado demais para ser processado.",
+                file = human::file_name(file)
+            ),
+            OpError::PasswordProtected(file) => tr!(
+                "“{file}” está protegido por senha. Adicione-o de novo à ferramenta e digite a senha \
                  quando ela for pedida, ou use “Remover senha” para gravar uma cópia sem senha.",
-                human::file_name(file)
+                file = human::file_name(file)
             ),
-            OpError::WrongPassword(file) => write!(
-                f,
-                "A senha informada não abre “{}”. Confira maiúsculas, minúsculas e acentos.",
-                human::file_name(file)
+            OpError::WrongPassword(file) => tr!(
+                "A senha informada não abre “{file}”. Confira maiúsculas, minúsculas e acentos.",
+                file = human::file_name(file)
             ),
-            OpError::OwnerPasswordRequired(file) => write!(
-                f,
-                "A senha informada abre “{}”, mas o autor restringiu impressão, cópia ou edição. \
+            OpError::OwnerPasswordRequired(file) => tr!(
+                "A senha informada abre “{file}”, mas o autor restringiu impressão, cópia ou edição. \
                  Para trabalhar nele ou remover a proteção, é preciso a senha de permissões (do proprietário).",
-                human::file_name(file)
+                file = human::file_name(file)
             ),
             OpError::NotEncrypted(file) => {
-                write!(f, "“{}” não está protegido por senha; não há o que remover.", human::file_name(file))
+                tr!("“{file}” não está protegido por senha; não há o que remover.", file = human::file_name(file))
             }
-            OpError::UnsupportedImage { file, .. } => write!(
-                f,
-                "Não foi possível ler “{}” como imagem. Formatos aceitos: JPEG, PNG, BMP, GIF, WebP e TIFF.",
-                human::file_name(file)
+            OpError::UnsupportedImage { file, .. } => tr!(
+                "Não foi possível ler “{file}” como imagem. Formatos aceitos: JPEG, PNG, BMP, GIF, WebP e TIFF.",
+                file = human::file_name(file)
             ),
-            OpError::InvalidRange(msg) => write!(f, "{msg}"),
-            OpError::PageOutOfRange { page, total } => write!(
-                f,
-                "A página {page} não existe: o documento tem {total} página{}.",
-                if *total == 1 { "" } else { "s" }
+            OpError::InvalidRange(msg) => msg.clone(),
+            OpError::PageOutOfRange { page, total } => trn!(
+                *total as usize,
+                "A página {page} não existe: o documento tem {total} página.",
+                "A página {page} não existe: o documento tem {total} páginas.",
+                page,
+                total
             ),
-            OpError::EmptySelection => write!(f, "Nenhuma página foi selecionada."),
+            OpError::EmptySelection => tr!("Nenhuma página foi selecionada.").to_string(),
             OpError::Io { context, source } => {
                 let hint = match io_kind(source) {
-                    IoKind::NoSpace => "Libere espaço no disco ou escolha outro destino.",
-                    IoKind::Permission => "Escolha uma pasta em que você tenha permissão de escrita.",
-                    IoKind::ReadOnly => "O destino está montado como somente leitura. Escolha outra pasta.",
-                    IoKind::NotFound => "Verifique se o arquivo ainda existe e não foi movido.",
-                    IoKind::Other => "Verifique o arquivo e o destino e tente novamente.",
+                    IoKind::NoSpace => tr!("Libere espaço no disco ou escolha outro destino."),
+                    IoKind::Permission => tr!("Escolha uma pasta em que você tenha permissão de escrita."),
+                    IoKind::ReadOnly => tr!("O destino está montado como somente leitura. Escolha outra pasta."),
+                    IoKind::NotFound => tr!("Verifique se o arquivo ainda existe e não foi movido."),
+                    IoKind::Other => tr!("Verifique o arquivo e o destino e tente novamente."),
                 };
-                write!(f, "Falha ao {context}. {hint}")
+                tr!("Falha ao {context}. {hint}", context, hint)
             }
-            OpError::ToolFailed { tool, .. } => write!(
-                f,
-                "{} não conseguiu processar o documento. O arquivo pode estar danificado ou usar \
+            OpError::ToolFailed { tool, .. } => tr!(
+                "{program} não conseguiu processar o documento. O arquivo pode estar danificado ou usar \
                  um recurso não suportado. Veja os detalhes técnicos abaixo.",
-                tool.label()
+                program = tool.label()
             ),
             OpError::OutputInvalid(msg) => {
-                write!(f, "O arquivo gerado não passou na verificação e foi descartado: {msg}")
+                tr!("O arquivo gerado não passou na verificação e foi descartado: {reason}", reason = msg)
             }
-            OpError::MissingOcrLanguage { language, install } => write!(
-                f,
+            OpError::MissingOcrLanguage { language, install } => tr!(
                 "O reconhecimento em {language} precisa dos dados desse idioma para o Tesseract, que não estão \
-                 instalados. Instale com: {install}"
+                 instalados. Instale com: {install}",
+                language,
+                install
             ),
-            OpError::Cancelled => write!(f, "A operação foi cancelada. Nenhum arquivo foi criado."),
-        }
+            OpError::Cancelled => tr!("A operação foi cancelada. Nenhum arquivo foi criado.").to_string(),
+        };
+        f.write_str(&message)
     }
 }
 

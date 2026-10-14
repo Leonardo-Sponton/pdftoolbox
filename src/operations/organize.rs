@@ -67,15 +67,15 @@ fn build(input: &Path, pages: &[u32], tmp: &Path, ctx: &JobCtx) -> OpResult<()> 
 
 pub fn merge(inputs: &[PathBuf], dest: &Destination, ctx: &JobCtx) -> OpResult<Outcome> {
     if inputs.len() < 2 {
-        return Err(OpError::InvalidRange("Selecione pelo menos dois PDFs para mesclar.".into()));
+        return Err(OpError::InvalidRange(tr!("Selecione pelo menos dois PDFs para mesclar.").into()));
     }
     let mut sources = Vec::new();
     for (i, input) in inputs.iter().enumerate() {
-        ctx.report(i as f64 / (inputs.len() + 1) as f64, &format!("Lendo {}", storage::stem(input)));
+        ctx.report(i as f64 / (inputs.len() + 1) as f64, &tr!("Lendo {file}", file = storage::stem(input)));
         let n = qpdf::page_count(input, &ctx.cancel)?;
         sources.extend((1..=n).map(|p| (input.as_path(), p)));
     }
-    ctx.report(0.8, "Mesclando");
+    ctx.report(0.8, tr!("Mesclando"));
     let job = JobDir::new()?;
     let tmp = job.file("mesclado.pdf");
     qpdf::assemble(&sources, &tmp, &ctx.cancel)?;
@@ -83,7 +83,7 @@ pub fn merge(inputs: &[PathBuf], dest: &Destination, ctx: &JobCtx) -> OpResult<O
     let mut outcome = Outcome::default();
     let name = output_name(dest, "Documentos mesclados", "pdf");
     outcome.push(storage::commit(&tmp, &dest.dir, &name)?);
-    outcome.notes.push(format!("{} páginas de {} arquivos.", sources.len(), inputs.len()));
+    outcome.notes.push(tr!("{pages} páginas de {files} arquivos.", pages = sources.len(), files = inputs.len()));
     Ok(outcome)
 }
 
@@ -92,7 +92,10 @@ fn write_groups(input: &Path, groups: &[Vec<u32>], dest: &Destination, ctx: &Job
     let job = JobDir::new()?;
     let mut temps = Vec::new();
     for (i, group) in groups.iter().enumerate() {
-        ctx.report(i as f64 / groups.len() as f64, &format!("Gerando arquivo {} de {}", i + 1, groups.len()));
+        ctx.report(
+            i as f64 / groups.len() as f64,
+            &tr!("Gerando arquivo {n} de {total}", n = i + 1, total = groups.len()),
+        );
         let tmp = job.file(&format!("parte-{i}.pdf"));
         build(input, group, &tmp, ctx)?;
         temps.push((tmp, format!("{} - {}.pdf", stem(input), page_label(group))));
@@ -120,7 +123,7 @@ pub fn split(input: &Path, mode: &SplitMode, dest: &Destination, ctx: &JobCtx) -
     };
     if groups.len() == 1 && groups[0].len() as u32 == total {
         return Err(OpError::InvalidRange(
-            "A divisão resultaria em um único arquivo igual ao original. Ajuste os intervalos.".into(),
+            tr!("A divisão resultaria em um único arquivo igual ao original. Ajuste os intervalos.").into(),
         ));
     }
     write_groups(input, &groups, dest, ctx)
@@ -135,7 +138,7 @@ pub fn extract(input: &Path, spec: &str, separate: bool, dest: &Destination, ctx
     }
     let job = JobDir::new()?;
     let tmp = job.file("extraido.pdf");
-    ctx.report(0.3, "Extraindo páginas");
+    ctx.report(0.3, tr!("Extraindo páginas"));
     build(input, &list, &tmp, ctx)?;
     let mut outcome = Outcome::default();
     let name = output_name(dest, &format!("{} - {}", stem(input), page_label(&list)), "pdf");
@@ -148,16 +151,21 @@ pub fn remove(input: &Path, spec: &str, dest: &Destination, ctx: &JobCtx) -> OpR
     let removed = pages::parse_list(spec, total)?;
     let keep = pages::complement(&removed, total);
     if keep.is_empty() {
-        return Err(OpError::InvalidRange("Não é possível remover todas as páginas do documento.".into()));
+        return Err(OpError::InvalidRange(tr!("Não é possível remover todas as páginas do documento.").into()));
     }
     let job = JobDir::new()?;
     let tmp = job.file("editado.pdf");
-    ctx.report(0.3, "Removendo páginas");
+    ctx.report(0.3, tr!("Removendo páginas"));
     build(input, &keep, &tmp, ctx)?;
     let mut outcome = Outcome::default();
     let name = output_name(dest, &format!("{} - sem {}", stem(input), page_label(&removed)), "pdf");
     outcome.push(storage::commit(&tmp, &dest.dir, &name)?);
-    outcome.notes.push(format!("{} página(s) removida(s); restam {}.", total - keep.len() as u32, keep.len()));
+    let (gone, left) = (total as usize - keep.len(), keep.len());
+    outcome.notes.push(format!(
+        "{} {}",
+        trn!(gone, "{gone} página removida;", "{gone} páginas removidas;", gone),
+        trn!(left, "resta {left}.", "restam {left}.", left)
+    ));
     Ok(outcome)
 }
 
@@ -170,7 +178,7 @@ pub fn rotate(
 ) -> OpResult<Outcome> {
     let n = inputs.len();
     batch(inputs, |i, input, outcome| {
-        ctx.report(i as f64 / n as f64, &format!("Girando {}", stem(input)));
+        ctx.report(i as f64 / n as f64, &tr!("Girando {file}", file = stem(input)));
         let total = qpdf::page_count(input, &ctx.cancel)?;
         let pages = match spec.map(str::trim).filter(|s| !s.is_empty()) {
             Some(spec) => pages::parse_list(spec, total)?,
@@ -189,10 +197,10 @@ pub fn rotate(
 /// Reordena, duplica, exclui e gira páginas em uma única saída.
 pub fn organize(input: &Path, items: &[PageItem], dest: &Destination, ctx: &JobCtx) -> OpResult<Outcome> {
     if items.is_empty() {
-        return Err(OpError::InvalidRange("O documento final não pode ficar sem páginas.".into()));
+        return Err(OpError::InvalidRange(tr!("O documento final não pode ficar sem páginas.").into()));
     }
     if items.iter().all(PageItem::is_blank) {
-        return Err(OpError::InvalidRange("O documento final precisa ter pelo menos uma página original.".into()));
+        return Err(OpError::InvalidRange(tr!("O documento final precisa ter pelo menos uma página original.").into()));
     }
     let total = qpdf::page_count(input, &ctx.cancel)?;
     if let Some(bad) = items.iter().find(|it| it.page > total) {
@@ -200,7 +208,7 @@ pub fn organize(input: &Path, items: &[PageItem], dest: &Destination, ctx: &JobC
     }
     let job = JobDir::new()?;
     let ordered = job.file("ordenado.pdf");
-    ctx.report(0.2, "Reorganizando páginas");
+    ctx.report(0.2, tr!("Reorganizando páginas"));
     // Páginas em branco vêm de um PDF gerado aqui, uma por item em branco.
     let blanks = job.file("em-branco.pdf");
     let blank_count = items.iter().filter(|it| it.is_blank()).count();
@@ -208,7 +216,8 @@ pub fn organize(input: &Path, items: &[PageItem], dest: &Destination, ctx: &JobC
         let sizes = poppler::page_sizes(input, total, &ctx.cancel)?;
         let pages: Vec<_> =
             blank_sizes(items, &sizes).into_iter().map(|(w, h)| crate::pdfwriter::OverlayPage::empty(w, h)).collect();
-        crate::pdfwriter::overlay_pdf(&blanks, &pages).map_err(|e| OpError::io("criar as páginas em branco", e))?;
+        crate::pdfwriter::overlay_pdf(&blanks, &pages)
+            .map_err(|e| OpError::io(tr!("criar as páginas em branco"), e))?;
     }
     let mut next_blank = 0;
     let sources: Vec<(&Path, u32)> = items
@@ -241,7 +250,7 @@ pub fn organize(input: &Path, items: &[PageItem], dest: &Destination, ctx: &JobC
     let result = if rotations.is_empty() {
         ordered
     } else {
-        ctx.report(0.6, "Aplicando rotações");
+        ctx.report(0.6, tr!("Aplicando rotações"));
         let rotated = job.file("organizado.pdf");
         qpdf::rotate(&ordered, &rotations, &rotated, &ctx.cancel)?;
         verify_pdf(&rotated, items.len() as u32, ctx)?;
@@ -250,10 +259,16 @@ pub fn organize(input: &Path, items: &[PageItem], dest: &Destination, ctx: &JobC
     let mut outcome = Outcome::default();
     let name = output_name(dest, &format!("{} - organizado", stem(input)), "pdf");
     outcome.push(storage::commit(&result, &dest.dir, &name)?);
-    let mut note = format!("{} página(s) no documento final", items.len());
-    if blank_count > 0 {
-        note.push_str(&format!(", {blank_count} delas em branco"));
-    }
-    outcome.notes.push(note + ".");
+    let count = items.len();
+    outcome.notes.push(match blank_count {
+        0 => trn!(count, "{count} página no documento final.", "{count} páginas no documento final.", count),
+        _ => trn!(
+            blank_count,
+            "{count} páginas no documento final, {blank_count} delas em branco.",
+            "{count} páginas no documento final, {blank_count} delas em branco.",
+            count,
+            blank_count
+        ),
+    });
     Ok(outcome)
 }

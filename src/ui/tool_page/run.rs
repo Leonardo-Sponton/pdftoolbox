@@ -46,7 +46,7 @@ impl ToolPage {
         if let Some(token) = self.running.borrow().as_ref() {
             token.cancel();
             self.cancel_button.set_sensitive(false);
-            self.status.set_text("Cancelando…");
+            self.status.set_text(tr!("Cancelando…"));
         }
     }
 
@@ -72,11 +72,11 @@ impl ToolPage {
         clear(&self.result_slot);
         self.set_running(true);
         self.progress.set_fraction(0.0);
-        self.status.set_text("Preparando…");
+        self.status.set_text(tr!("Preparando…"));
 
         let title = match self.files.borrow().as_slice() {
-            [one] => format!("{} — {}", self.info.title, human::file_name(one)),
-            many => format!("{} — {} arquivos", self.info.title, many.len()),
+            [one] => format!("{} — {}", self.info.title(), human::file_name(one)),
+            many => tr!("{tool} — {n} arquivos", tool = self.info.title(), n = many.len()),
         };
         let handle = jobs::spawn(move |ctx| operations::execute(request, &dest, ctx));
         self.running.replace(Some(handle.cancel.clone()));
@@ -86,7 +86,7 @@ impl ToolPage {
         glib::spawn_future_local(async move {
             while let Ok(event) = handle.events.recv().await {
                 match event {
-                    JobEvent::Queued => page.status.set_text("Na fila…"),
+                    JobEvent::Queued => page.status.set_text(tr!("Na fila…")),
                     JobEvent::Progress(f, text) => {
                         page.progress.set_fraction(f);
                         page.status.set_text(&text);
@@ -130,7 +130,7 @@ impl ToolPage {
         self.reveal_result();
         // Falhas do motor ou do disco podem passar numa nova tentativa.
         if matches!(e, OpError::ToolFailed { .. } | OpError::Io { .. } | OpError::OutputInvalid(_)) {
-            self.run_button.set_label("Tentar novamente");
+            self.run_button.set_label(tr!("Tentar novamente"));
         } else {
             self.refresh_preview();
         }
@@ -147,28 +147,28 @@ impl ToolPage {
         self.refresh_preview();
         let Some(win) = self.window() else { return };
         let title = if outcome.cancelled {
-            "Cancelado — alguns arquivos já haviam sido gravados"
+            tr!("Cancelado — alguns arquivos já haviam sido gravados")
         } else if !outcome.failures.is_empty() {
-            "Concluído com falhas"
+            tr!("Concluído com falhas")
         } else if outcome.outputs.is_empty() {
-            "Nada a fazer"
+            tr!("Nada a fazer")
         } else {
-            "Concluído"
+            tr!("Concluído")
         };
         let group = adw::PreferencesGroup::builder().title(title).build();
         let mut notes = outcome.notes.clone();
         let from_copy = self.files.borrow().iter().any(|f| unlock::is_copy(f));
         if from_copy && !outcome.outputs.is_empty() && self.info.id != ToolId::Protect {
             notes.push(
-                "O resultado foi salvo sem senha (o original continua protegido). Para protegê-lo, use \
-                 “Proteger com senha”."
-                    .into(),
+                tr!("O resultado foi salvo sem senha (o original continua protegido). Para protegê-lo, use \
+                     “Proteger com senha”.")
+                .into(),
             );
         }
         if !notes.is_empty() {
             group.set_description(Some(&glib::markup_escape_text(&notes.join("\n"))));
         }
-        let new_button = gtk::Button::builder().label("Começar de novo").valign(gtk::Align::Center).build();
+        let new_button = gtk::Button::builder().label(tr!("Começar de novo")).valign(gtk::Align::Center).build();
         new_button.add_css_class("flat");
         new_button.connect_clicked(glib::clone!(
             #[weak(rename_to = page)]
@@ -184,10 +184,15 @@ impl ToolPage {
         if let Some(folder) = &outcome.folder {
             let row = widgets::plain_row(
                 &human::file_name(folder),
-                &format!("Pasta com {} arquivo(s)", outcome.outputs.len()),
+                &trn!(
+                    outcome.outputs.len(),
+                    "Pasta com {n} arquivo",
+                    "Pasta com {n} arquivos",
+                    n = outcome.outputs.len()
+                ),
             );
             row.add_prefix(&gtk::Image::from_icon_name("folder-symbolic"));
-            let open = widgets::icon_button("folder-open-symbolic", "Abrir pasta");
+            let open = widgets::icon_button("folder-open-symbolic", tr!("Abrir pasta"));
             let (w, f) = (win.clone(), folder.clone());
             open.connect_clicked(move |_| widgets::show_in_folder(&w, &f));
             row.add_suffix(&open);
@@ -198,7 +203,8 @@ impl ToolPage {
             group.add(&output_row(&win, &out.path, out.size));
         }
         if outcome.outputs.len() > shown {
-            group.add(&widgets::plain_row(&format!("e mais {} arquivo(s)", outcome.outputs.len() - shown), ""));
+            let more = outcome.outputs.len() - shown;
+            group.add(&widgets::plain_row(&trn!(more, "e mais {n} arquivo", "e mais {n} arquivos", n = more), ""));
         }
         for (file, err) in &outcome.failures {
             group.add(&failure_row(&human::file_name(file), err));
@@ -207,8 +213,8 @@ impl ToolPage {
         self.reveal_result();
         match outcome.outputs.as_slice() {
             [] => {}
-            [one] => self.toast(&format!("Salvo: {}", human::file_name(&one.path))),
-            many => self.toast(&format!("{} arquivos salvos", many.len())),
+            [one] => self.toast(&tr!("Salvo: {file}", file = human::file_name(&one.path))),
+            many => self.toast(&tr!("{n} arquivos salvos", n = many.len())),
         }
     }
 }
@@ -217,10 +223,10 @@ impl ToolPage {
 fn output_row(win: &adw::ApplicationWindow, path: &std::path::Path, size: u64) -> adw::ActionRow {
     let row = widgets::plain_row(&human::file_name(path), &human::size(size));
     row.set_tooltip_text(Some(&path.to_string_lossy()));
-    let open = widgets::icon_button("document-open-symbolic", "Abrir");
+    let open = widgets::icon_button("document-open-symbolic", tr!("Abrir"));
     let (w, p) = (win.clone(), path.to_path_buf());
     open.connect_clicked(move |_| widgets::open_file(&w, &p));
-    let show = widgets::icon_button("folder-open-symbolic", "Mostrar na pasta");
+    let show = widgets::icon_button("folder-open-symbolic", tr!("Mostrar na pasta"));
     let (w, p) = (win.clone(), path.to_path_buf());
     show.connect_clicked(move |_| widgets::show_in_folder(&w, &p));
     row.add_suffix(&open);
@@ -274,8 +280,8 @@ fn error_group(e: &OpError) -> adw::PreferencesGroup {
     let group =
         adw::PreferencesGroup::builder().title(e.title()).description(glib::markup_escape_text(&e.to_string())).build();
     if is_technical(e) {
-        let row = failure_row("Detalhes técnicos", e);
-        row.set_subtitle("Útil para relatar um problema. Não inclui o conteúdo do documento.");
+        let row = failure_row(tr!("Detalhes técnicos"), e);
+        row.set_subtitle(tr!("Útil para relatar um problema. Não inclui o conteúdo do documento."));
         group.add(&row);
     }
     if let OpError::MissingTool(t) = e {

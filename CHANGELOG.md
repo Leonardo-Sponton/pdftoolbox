@@ -3,12 +3,23 @@
 ## Não lançado
 
 ### Adicionado
+- **Interface em inglês**, além do português. Na primeira execução o
+  aplicativo segue o idioma do sistema (`LANGUAGE`, `LC_ALL`, `LC_MESSAGES`,
+  `LANG` ou `/etc/locale.conf`; outros idiomas ficam em português). Em
+  **Menu → Idioma · Language** dá para fixar Português ou English ou voltar a
+  seguir o sistema; a escolha é gravada em `~/.config/pdftoolbox/config`
+  (`idioma=`) e vale na hora para o menu, a tela inicial, diálogos e
+  mensagens. Os arquivos gerados são os mesmos nos dois idiomas.
 - **Mesclar e Imagens para PDF:** a ordem dos arquivos pode ser mudada
   arrastando a linha com o mouse (alça ⠿ à esquerda); a linha sob o cursor
   fica destacada e o arquivo assume a posição dela. As setas continuam para
   quem usa o teclado.
 
 ### Alterado
+- As preferências preservam linhas que esta versão não conhece, em vez de
+  descartá-las ao gravar.
+- Números com casas decimais e datas acompanham o idioma (1,5 MB / 1.5 MB;
+  14/10/2026 / 2026-10-14).
 - **Organização interna do código**, sem mudança de comportamento: a página
   de ferramenta, o Anotar e o gerador de PDF foram divididos em módulos por
   responsabilidade; Organizar e Anotar passaram a compartilhar cabeçalho,

@@ -122,7 +122,7 @@ fn deflate(data: &[u8]) -> io::Result<Vec<u8>> {
 }
 
 fn write_err(e: io::Error) -> OpError {
-    OpError::io("gravar o PDF temporário", e)
+    OpError::io(tr!("gravar o PDF temporário"), e)
 }
 
 /// Número compacto para o conteúdo do PDF: “1”, “0.5”, nunca “-0”.

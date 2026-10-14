@@ -98,14 +98,14 @@ fn unsupported<E: std::fmt::Display>(path: &Path) -> impl Fn(E) -> OpError + '_ 
 /// Decodificador da imagem em `path` (formato pelo conteúdo, não pela extensão).
 fn open_decoder(path: &Path) -> OpResult<impl ImageDecoder> {
     let reader = ImageReader::open(path)
-        .map_err(|e| OpError::io_path("ler", path, e))?
+        .map_err(|e| OpError::io_path(tr!("ler “{file}”"), path, e))?
         .with_guessed_format()
         .map_err(unsupported(path))?;
     reader.into_decoder().map_err(unsupported(path))
 }
 
 pub(super) fn load_image(path: &Path) -> OpResult<PdfImage> {
-    let bytes = std::fs::read(path).map_err(|e| OpError::io_path("ler", path, e))?;
+    let bytes = std::fs::read(path).map_err(|e| OpError::io_path(tr!("ler “{file}”"), path, e))?;
     let reader = ImageReader::new(io::Cursor::new(&bytes)).with_guessed_format().map_err(unsupported(path))?;
     let format = reader.format();
     let mut decoder = reader.into_decoder().map_err(unsupported(path))?;

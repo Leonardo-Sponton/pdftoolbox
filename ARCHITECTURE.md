@@ -18,9 +18,16 @@ src/
 │   │   └── tesseract.rs    OCR: palavras e linhas (TSV) e orientação da página
 │   ├── annotate.rs   anotações (texto, imagem, destaque, moldura): caixas em
 │   │                 pontos e a camada de cada página
-│   ├── error.rs      OpError: mensagem ao usuário (pt-BR) + detalhe técnico
-│   ├── human.rs      textos para pessoas: nome de arquivo, tamanho, plural,
-│   │                 vírgula decimal
+│   ├── error.rs      OpError: mensagem ao usuário (montada no idioma atual ao
+│   │                 ser exibida) + detalhe técnico
+│   ├── human.rs      textos para pessoas: nome de arquivo, tamanho, separador
+│   │                 decimal do idioma
+│   ├── i18n/         idioma da interface (português e inglês)
+│   │   ├── mod.rs    idioma atual, preferência, `tr!`/`trn!`/`n_`
+│   │   ├── locale.rs idioma do sistema (LANGUAGE, LC_ALL, LC_MESSAGES, LANG,
+│   │   │             /etc/locale.conf)
+│   │   ├── en.rs     catálogo inglês (texto em português → tradução)
+│   │   └── tests.rs  integridade do catálogo contra o código-fonte
 │   ├── jobs.rs       CancelToken, JobCtx (progresso), fila com limite de 2 tarefas
 │   ├── operations/   Request → Outcome; validação e gravação dos resultados.
 │   │                 mod.rs tem o que as operações compartilham: lote, nomes
@@ -67,7 +74,8 @@ build.rs              compila data/resources (ícones simbólicos) em GResource
     ├── tasks.rs      lista de tarefas da sessão
     ├── unlock.rs     PDFs com senha: diálogo e cópias desbloqueadas da sessão
     ├── dialogs.rs    dependências, sobre
-    ├── settings.rs   preferências (tema, recentes, última pasta)
+    ├── settings.rs   preferências (tema, idioma, recentes, última pasta,
+    │                 idiomas do OCR); linhas desconhecidas são preservadas
     └── widgets.rs    seletores de arquivo, atalhos, utilitários
 ```
 
@@ -110,8 +118,35 @@ orientação EXIF vira a matriz de transformação (sem recompressão) e alfa vi
 está em praticamente toda distribuição GNOME e cobre renderização e miniaturas.
 
 **Sem estado global mutável**, exceto: o contador de vagas da fila
-(`jobs::slots`, intrínseco à função) e o `thread_local` que guarda o estado da
-janela única (GtkApplication é de instância única).
+(`jobs::slots`, intrínseco à função), o `thread_local` que guarda o estado da
+janela única (GtkApplication é de instância única) e o idioma atual
+(`i18n::CURRENT`, um atômico lido também pelas threads das tarefas).
+
+**Idioma da interface: catálogo próprio, com o português como chave.** As
+mensagens continuam escritas em português no código, dentro de `tr!`,
+`trn!` (singular/plural) ou `n_` (tabelas constantes), e esse texto é a chave
+do catálogo inglês `i18n/en.rs`, como no gettext — mas sem `.po`/`.mo`, sem
+`setlocale` e sem dependência nova: o catálogo vai embutido no binário e o
+idioma pode mudar com o programa aberto. Os marcadores são nomeados
+(`{file}`), para a tradução poder mudar a ordem das palavras; frases com
+plural ou gênero diferente são mensagens inteiras separadas, nunca pedaços
+concatenados. Mensagem sem tradução aparece em português. Os testes de
+`i18n/tests.rs` leem o código-fonte e conferem: toda mensagem marcada tem
+tradução, toda tradução é usada, não há chaves repetidas, os marcadores são
+os mesmos dos dois lados e não sobrou texto acentuado sem marcação.
+
+O idioma vem da preferência gravada (`idioma=pt|en`; sem ela, “seguir o
+sistema”). O do sistema segue as regras do gettext — `LANGUAGE` (lista,
+ignorada com locale C), depois `LC_ALL`, `LC_MESSAGES`, `LANG` e, sem nenhuma
+delas, `/etc/locale.conf` —; idioma não suportado cai no português. Quando o
+idioma escolhido difere do sistema, `main` ajusta `LANGUAGE` antes de o GTK
+iniciar, para os textos do próprio GTK/libadwaita acompanharem; os
+programas externos recebem o valor original (`engines::run_command`). Trocar
+o idioma refaz o menu, a tela inicial (mantendo os arquivos escolhidos) e a
+lista de tarefas; páginas de ferramentas já abertas ficam como estão até
+serem reabertas, para não perder opções nem alterações. O idioma não muda
+nenhum arquivo: nomes gerados e o texto gravado pela numeração continuam em
+português (`tests/i18n.rs` compara as saídas nos dois idiomas).
 
 **Interface sem subclasses GObject.** Cada página é uma struct Rust em `Rc`
 presa ao tempo de vida do widget (`widgets::keep_alive`), com referências

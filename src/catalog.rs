@@ -2,6 +2,7 @@
 //! com implementação real; o restante do roteiro está em FEATURE_MATRIX.md.
 
 use crate::engines::Tool;
+use crate::i18n::{n_, tr};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum ToolId {
@@ -40,11 +41,11 @@ impl Category {
 
     pub fn title(self) -> &'static str {
         match self {
-            Category::Organize => "Organizar",
-            Category::Edit => "Editar",
-            Category::Convert => "Converter",
-            Category::Compress => "Comprimir",
-            Category::Security => "Segurança",
+            Category::Organize => tr!("Organizar"),
+            Category::Edit => tr!("Editar"),
+            Category::Convert => tr!("Converter"),
+            Category::Compress => tr!("Comprimir"),
+            Category::Security => tr!("Segurança"),
         }
     }
 }
@@ -60,8 +61,8 @@ pub enum Accepts {
 pub struct ToolInfo {
     pub id: ToolId,
     pub key: &'static str,
-    pub title: &'static str,
-    pub summary: &'static str,
+    title: &'static str,
+    summary: &'static str,
     pub icon: &'static str,
     pub category: Category,
     pub accepts: Accepts,
@@ -69,245 +70,267 @@ pub struct ToolInfo {
     pub min_files: usize,
     pub needs: &'static [Tool],
     /// Palavras extras para a busca.
-    pub keywords: &'static str,
+    keywords: &'static str,
+}
+
+impl ToolInfo {
+    pub fn title(&self) -> &'static str {
+        tr(self.title)
+    }
+
+    pub fn summary(&self) -> &'static str {
+        tr(self.summary)
+    }
+
+    /// Palavras da busca no idioma da interface e em português: quem usa o
+    /// aplicativo em inglês ainda acha “juntar”, e vice-versa.
+    fn search_text(&self) -> String {
+        let mut text = format!("{} {} {}", self.title, self.summary, self.keywords);
+        if tr(self.title) != self.title {
+            text = format!("{text} {} {} {}", tr(self.title), tr(self.summary), tr(self.keywords));
+        }
+        text
+    }
 }
 
 pub const TOOLS: &[ToolInfo] = &[
     ToolInfo {
         id: ToolId::Organize,
         key: "organizar",
-        title: "Organizar páginas",
-        summary: "Reordene arrastando, gire, duplique, exclua e insira páginas em branco vendo as miniaturas",
+        title: n_("Organizar páginas"),
+        summary: n_("Reordene arrastando, gire, duplique, exclua e insira páginas em branco vendo as miniaturas"),
         icon: "pdftoolbox-organizar-symbolic",
         category: Category::Organize,
         accepts: Accepts::Pdf,
         multiple: false,
         min_files: 1,
         needs: &[Tool::Qpdf, Tool::Pdftoppm],
-        keywords: "reordenar ordem miniaturas mover duplicar excluir girar",
+        keywords: n_("reordenar ordem miniaturas mover duplicar excluir girar"),
     },
     ToolInfo {
         id: ToolId::Merge,
         key: "mesclar",
-        title: "Mesclar PDFs",
-        summary: "Junte vários PDFs em um único documento, na ordem que escolher",
+        title: n_("Mesclar PDFs"),
+        summary: n_("Junte vários PDFs em um único documento, na ordem que escolher"),
         icon: "pdftoolbox-mesclar-symbolic",
         category: Category::Organize,
         accepts: Accepts::Pdf,
         multiple: true,
         min_files: 2,
         needs: &[Tool::Qpdf],
-        keywords: "juntar unir combinar",
+        keywords: n_("juntar unir combinar"),
     },
     ToolInfo {
         id: ToolId::Split,
         key: "dividir",
-        title: "Dividir PDF",
-        summary: "Separe por intervalos, em blocos de N páginas ou uma página por arquivo",
+        title: n_("Dividir PDF"),
+        summary: n_("Separe por intervalos, em blocos de N páginas ou uma página por arquivo"),
         icon: "pdftoolbox-dividir-symbolic",
         category: Category::Organize,
         accepts: Accepts::Pdf,
         multiple: false,
         min_files: 1,
         needs: &[Tool::Qpdf],
-        keywords: "separar partes intervalos",
+        keywords: n_("separar partes intervalos"),
     },
     ToolInfo {
         id: ToolId::Extract,
         key: "extrair",
-        title: "Extrair páginas",
-        summary: "Crie um novo PDF só com as páginas escolhidas",
+        title: n_("Extrair páginas"),
+        summary: n_("Crie um novo PDF só com as páginas escolhidas"),
         icon: "pdftoolbox-extrair-symbolic",
         category: Category::Organize,
         accepts: Accepts::Pdf,
         multiple: false,
         min_files: 1,
         needs: &[Tool::Qpdf],
-        keywords: "selecionar copiar páginas",
+        keywords: n_("selecionar copiar páginas"),
     },
     ToolInfo {
         id: ToolId::Remove,
         key: "remover",
-        title: "Remover páginas",
-        summary: "Exclua páginas específicas e salve o restante",
+        title: n_("Remover páginas"),
+        summary: n_("Exclua páginas específicas e salve o restante"),
         icon: "pdftoolbox-remover-symbolic",
         category: Category::Organize,
         accepts: Accepts::Pdf,
         multiple: false,
         min_files: 1,
         needs: &[Tool::Qpdf],
-        keywords: "excluir apagar deletar",
+        keywords: n_("excluir apagar deletar"),
     },
     ToolInfo {
         id: ToolId::Rotate,
         key: "girar",
-        title: "Girar PDF",
-        summary: "Gire todas as páginas ou só algumas, em um ou vários arquivos",
+        title: n_("Girar PDF"),
+        summary: n_("Gire todas as páginas ou só algumas, em um ou vários arquivos"),
         icon: "pdftoolbox-girar-symbolic",
         category: Category::Organize,
         accepts: Accepts::Pdf,
         multiple: true,
         min_files: 1,
         needs: &[Tool::Qpdf],
-        keywords: "rotacionar virar orientação paisagem retrato",
+        keywords: n_("rotacionar virar orientação paisagem retrato"),
     },
     ToolInfo {
         id: ToolId::ImagesToPdf,
         key: "imagens-para-pdf",
-        title: "Imagens para PDF",
-        summary: "JPEG, PNG, WebP, GIF, BMP e TIFF em PDF, sem recomprimir JPEGs",
+        title: n_("Imagens para PDF"),
+        summary: n_("JPEG, PNG, WebP, GIF, BMP e TIFF em PDF, sem recomprimir JPEGs"),
         icon: "pdftoolbox-imagens-para-pdf-symbolic",
         category: Category::Convert,
         accepts: Accepts::Images,
         multiple: true,
         min_files: 1,
         needs: &[Tool::Qpdf],
-        keywords: "jpg jpeg png webp gif bmp tiff foto converter",
+        keywords: n_("jpg jpeg png webp gif bmp tiff foto converter"),
     },
     ToolInfo {
         id: ToolId::PdfToImages,
         key: "pdf-para-imagens",
-        title: "PDF para imagens",
-        summary: "Converta cada página em PNG, JPEG ou TIFF na resolução desejada",
+        title: n_("PDF para imagens"),
+        summary: n_("Converta cada página em PNG, JPEG ou TIFF na resolução desejada"),
         icon: "pdftoolbox-pdf-para-imagens-symbolic",
         category: Category::Convert,
         accepts: Accepts::Pdf,
         multiple: true,
         min_files: 1,
         needs: &[Tool::Qpdf, Tool::Pdftoppm],
-        keywords: "png jpg jpeg tiff exportar converter imagem",
+        keywords: n_("png jpg jpeg tiff exportar converter imagem"),
     },
     ToolInfo {
         id: ToolId::Compress,
         key: "comprimir",
-        title: "Comprimir PDF",
-        summary: "Reduza o tamanho sem perda ou reamostrando imagens",
+        title: n_("Comprimir PDF"),
+        summary: n_("Reduza o tamanho sem perda ou reamostrando imagens"),
         icon: "pdftoolbox-comprimir-symbolic",
         category: Category::Compress,
         accepts: Accepts::Pdf,
         multiple: true,
         min_files: 1,
         needs: &[Tool::Qpdf],
-        keywords: "reduzir diminuir tamanho otimizar compactar",
+        keywords: n_("reduzir diminuir tamanho otimizar compactar"),
     },
     ToolInfo {
         id: ToolId::NumberPages,
         key: "numerar",
-        title: "Numerar páginas",
-        summary: "Escreva o número em cada página, na posição e no formato que escolher",
+        title: n_("Numerar páginas"),
+        summary: n_("Escreva o número em cada página, na posição e no formato que escolher"),
         icon: "pdftoolbox-numerar-symbolic",
         category: Category::Edit,
         accepts: Accepts::Pdf,
         multiple: true,
         min_files: 1,
         needs: &[Tool::Qpdf, Tool::Pdfinfo],
-        keywords: "numeração número paginação rodapé cabeçalho contar",
+        keywords: n_("numeração número paginação rodapé cabeçalho contar"),
     },
     ToolInfo {
         id: ToolId::Watermark,
         key: "marca-dagua",
-        title: "Marca d’água",
-        summary: "Escreva um texto semitransparente sobre as páginas, como “CONFIDENCIAL”",
+        title: n_("Marca d’água"),
+        summary: n_("Escreva um texto semitransparente sobre as páginas, como “CONFIDENCIAL”"),
         icon: "pdftoolbox-marca-dagua-symbolic",
         category: Category::Edit,
         accepts: Accepts::Pdf,
         multiple: true,
         min_files: 1,
         needs: &[Tool::Qpdf, Tool::Pdfinfo],
-        keywords: "marca dagua carimbo confidencial rascunho texto sobreposto",
+        keywords: n_("marca dagua carimbo confidencial rascunho texto sobreposto"),
     },
     ToolInfo {
         id: ToolId::Annotate,
         key: "anotar",
-        title: "Anotar e assinar",
-        summary: "Escreva textos, destaque trechos e coloque a imagem da sua assinatura nas páginas",
+        title: n_("Anotar e assinar"),
+        summary: n_("Escreva textos, destaque trechos e coloque a imagem da sua assinatura nas páginas"),
         icon: "pdftoolbox-anotar-symbolic",
         category: Category::Edit,
         accepts: Accepts::Pdf,
         multiple: false,
         min_files: 1,
         needs: &[Tool::Qpdf, Tool::Pdfinfo, Tool::Pdftoppm],
-        keywords: "assinatura assinar rubrica anotação comentário escrever texto destacar marca-texto \
-                   carimbo preencher formulário imagem logotipo moldura",
+        keywords: n_("assinatura assinar rubrica anotação comentário escrever texto destacar marca-texto \
+                   carimbo preencher formulário imagem logotipo moldura"),
     },
     ToolInfo {
         id: ToolId::Metadata,
         key: "metadados",
-        title: "Editar metadados",
-        summary: "Veja e altere título, autor, assunto e palavras-chave, ou apague tudo",
+        title: n_("Editar metadados"),
+        summary: n_("Veja e altere título, autor, assunto e palavras-chave, ou apague tudo"),
         icon: "pdftoolbox-metadados-symbolic",
         category: Category::Edit,
         accepts: Accepts::Pdf,
         multiple: false,
         min_files: 1,
         needs: &[Tool::Qpdf, Tool::Pdfinfo],
-        keywords: "propriedades título autor assunto palavras-chave informações limpar privacidade",
+        keywords: n_("propriedades título autor assunto palavras-chave informações limpar privacidade"),
     },
     ToolInfo {
         id: ToolId::PdfToText,
         key: "pdf-para-texto",
-        title: "PDF para texto",
-        summary: "Extraia o texto para um arquivo .txt, reconhecendo (OCR) as páginas digitalizadas",
+        title: n_("PDF para texto"),
+        summary: n_("Extraia o texto para um arquivo .txt, reconhecendo (OCR) as páginas digitalizadas"),
         icon: "pdftoolbox-pdf-para-texto-symbolic",
         category: Category::Convert,
         accepts: Accepts::Pdf,
         multiple: true,
         min_files: 1,
         needs: &[Tool::Qpdf, Tool::Pdftotext],
-        keywords: "txt extrair texto copiar conteúdo ocr digitalizado",
+        keywords: n_("txt extrair texto copiar conteúdo ocr digitalizado"),
     },
     ToolInfo {
         id: ToolId::Ocr,
         key: "ocr",
-        title: "OCR — reconhecer texto",
-        summary: "Torne pesquisável e copiável o texto de documentos digitalizados, mesmo tortos ou deitados",
+        title: n_("OCR — reconhecer texto"),
+        summary: n_("Torne pesquisável e copiável o texto de documentos digitalizados, mesmo tortos ou deitados"),
         icon: "pdftoolbox-ocr-symbolic",
         category: Category::Convert,
         accepts: Accepts::Pdf,
         multiple: true,
         min_files: 1,
         needs: &[Tool::Qpdf, Tool::Pdftoppm, Tool::Pdftotext, Tool::Tesseract],
-        keywords: "ocr reconhecimento texto digitalização digitalizado escaneado scanner foto pesquisável busca \
-                   tesseract copiar",
+        keywords: n_("ocr reconhecimento texto digitalização digitalizado escaneado scanner foto pesquisável busca \
+                   tesseract copiar"),
     },
     ToolInfo {
         id: ToolId::OfficeToPdf,
         key: "office-para-pdf",
-        title: "Office para PDF",
-        summary: "Converta documentos, planilhas e apresentações (Word, Excel, PowerPoint, LibreOffice)",
+        title: n_("Office para PDF"),
+        summary: n_("Converta documentos, planilhas e apresentações (Word, Excel, PowerPoint, LibreOffice)"),
         icon: "pdftoolbox-office-para-pdf-symbolic",
         category: Category::Convert,
         accepts: Accepts::Office,
         multiple: true,
         min_files: 1,
         needs: &[Tool::LibreOffice, Tool::Qpdf],
-        keywords: "word excel powerpoint docx xlsx pptx odt ods odp doc xls ppt rtf csv txt documento planilha apresentação",
+        keywords: n_(
+            "word excel powerpoint docx xlsx pptx odt ods odp doc xls ppt rtf csv txt documento planilha apresentação",
+        ),
     },
     ToolInfo {
         id: ToolId::Protect,
         key: "proteger",
-        title: "Proteger com senha",
-        summary: "Exija senha para abrir o PDF (AES-256) e, se quiser, restrinja impressão e cópia",
+        title: n_("Proteger com senha"),
+        summary: n_("Exija senha para abrir o PDF (AES-256) e, se quiser, restrinja impressão e cópia"),
         icon: "pdftoolbox-proteger-symbolic",
         category: Category::Security,
         accepts: Accepts::Pdf,
         multiple: true,
         min_files: 1,
         needs: &[Tool::Qpdf],
-        keywords: "senha criptografar proteger bloquear segurança cadeado",
+        keywords: n_("senha criptografar proteger bloquear segurança cadeado"),
     },
     ToolInfo {
         id: ToolId::Unlock,
         key: "remover-senha",
-        title: "Remover senha",
-        summary: "Salve uma cópia sem senha de um PDF cuja senha você conhece",
+        title: n_("Remover senha"),
+        summary: n_("Salve uma cópia sem senha de um PDF cuja senha você conhece"),
         icon: "pdftoolbox-remover-senha-symbolic",
         category: Category::Security,
         accepts: Accepts::Pdf,
         multiple: true,
         min_files: 1,
         needs: &[Tool::Qpdf],
-        keywords: "desbloquear senha descriptografar destravar tirar proteção",
+        keywords: n_("desbloquear senha descriptografar destravar tirar proteção"),
     },
 ];
 
@@ -336,7 +359,7 @@ pub fn normalize(s: &str) -> String {
 }
 
 pub fn matches(tool: &ToolInfo, query: &str) -> bool {
-    let haystack = normalize(&format!("{} {} {}", tool.title, tool.summary, tool.keywords));
+    let haystack = normalize(&tool.search_text());
     normalize(query).split_whitespace().all(|w| haystack.contains(w))
 }
 

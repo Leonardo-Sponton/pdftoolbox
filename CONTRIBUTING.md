@@ -36,8 +36,17 @@ a ausência de erro.
 - Nada de `unwrap()`/`expect()` para contornar erros: as operações devolvem
   `OpResult`, e a interface mostra o erro. Os poucos `expect` que restam
   afirmam invariantes (catálogo completo, recursos embutidos, pipes pedidos).
-- Textos para o usuário passam por `pdftoolbox::human` (nomes de arquivo,
-  tamanhos, plurais, vírgula decimal).
+- Textos para o usuário são escritos em português dentro de `tr!` (ou
+  `trn!` quando dependem de quantidade; `n_` em tabelas constantes) e
+  traduzidos em `src/i18n/en.rs`. Use marcadores nomeados
+  (`tr!("Lendo {file}", file = nome)`) e frases inteiras — nada de montar
+  frase com pedaços traduzidos separadamente nem de `if idioma == …`.
+  `cargo test i18n` aponta mensagens sem tradução, traduções sem uso e
+  marcadores divergentes. Nomes de arquivo, tamanhos e números com casas
+  decimais passam por `pdftoolbox::human`. Não traduza nomes de arquivos
+  gerados, o que é gravado no PDF nem detalhes técnicos/log.
+- Para ver a interface em inglês sem mudar o sistema: escolha
+  Menu → Idioma · Language → English, ou rode com `LANG=en_US.UTF-8`.
 - Na interface, sinais usam `glib::clone!(#[weak] …)`; código que espera
   (`async`) guarda um `Weak` e só o reabre depois do `await`.
 - Lógica sem GTK (textos, escolhas, cálculos) fica em funções puras, com

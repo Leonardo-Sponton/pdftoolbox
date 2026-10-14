@@ -1,8 +1,11 @@
-//! Textos para pessoas (pt-BR): nomes de arquivo, tamanhos, plurais e
-//! números com vírgula decimal. Tudo o que vira texto na interface ou nas
-//! mensagens das operações passa por aqui.
+//! Textos para pessoas: nomes de arquivo, tamanhos e números com o separador
+//! decimal do idioma da interface (vírgula em português, ponto em inglês).
+//! Tudo o que vira número ou nome na interface ou nas mensagens das operações
+//! passa por aqui; frases e plurais ficam em `i18n`.
 
 use std::path::Path;
+
+use crate::i18n::{self, Language};
 
 /// Nome do arquivo sem a pasta (ou o caminho inteiro, se não houver nome).
 pub fn file_name(path: &Path) -> String {
@@ -21,14 +24,13 @@ pub fn size(bytes: u64) -> String {
     if unit == 0 { format!("{bytes} B") } else { format!("{} {}", decimal(value, 1), UNITS[unit]) }
 }
 
-/// “1 página”, “3 páginas”.
-pub fn plural(n: usize, one: &str, many: &str) -> String {
-    format!("{n} {}", if n == 1 { one } else { many })
-}
-
-/// Número com `places` casas e vírgula decimal: “1,5”.
+/// Número com `places` casas e o separador do idioma: “1,5” ou “1.5”.
 pub fn decimal(value: f64, places: usize) -> String {
-    format!("{value:.places$}").replace('.', ",")
+    let text = format!("{value:.places$}");
+    match i18n::current() {
+        Language::Portuguese => text.replace('.', ","),
+        Language::English => text,
+    }
 }
 
 #[cfg(test)]
@@ -43,10 +45,12 @@ mod tests {
     }
 
     #[test]
-    fn plural_and_names() {
-        assert_eq!(plural(1, "página", "páginas"), "1 página");
-        assert_eq!(plural(0, "página", "páginas"), "0 páginas");
+    fn decimal_separator_follows_the_language() {
         assert_eq!(file_name(Path::new("/a/b c.pdf")), "b c.pdf");
         assert_eq!(decimal(1.54, 1), "1,5");
+        i18n::with_language(Language::English, || {
+            assert_eq!(decimal(1.54, 1), "1.5");
+            assert_eq!(size(1536), "1.5 KB");
+        });
     }
 }

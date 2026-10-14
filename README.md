@@ -12,9 +12,11 @@ machine.
 - 💸 **No subscription, no account, no ads.** Free and open source (GPL-3.0-or-later).
 - 🛡️ **Your originals are safe.** Source files are never modified or overwritten.
 
-> **Language note:** the user interface is currently in **Brazilian Portuguese**
-> only. This README is in English; the other project documents
-> ([ARCHITECTURE](ARCHITECTURE.md), [SECURITY](SECURITY.md),
+> **Language note:** the user interface is available in **English** and
+> **Brazilian Portuguese**. By default it follows the system language
+> (anything other than English or Portuguese falls back to Portuguese); pick
+> one under **Menu → Language · Idioma**. This README is in English; the other
+> project documents ([ARCHITECTURE](ARCHITECTURE.md), [SECURITY](SECURITY.md),
 > [CHANGELOG](CHANGELOG.md), …) are in Portuguese.
 
 ## Screenshots
@@ -297,7 +299,12 @@ Times include verifying the result and writing it safely.
 
 ## Known limitations
 
-- **Interface in Portuguese only** for now.
+- **Two interface languages** (English and Portuguese). The language changes
+  the interface only: generated file names (“report - comprimido.pdf”) and
+  the “Página 1 de 10” page-number format stay in Portuguese. Tool pages that
+  are already open when you switch keep the previous language until reopened,
+  and GTK’s own texts (text-field context menu, parts of the About dialog)
+  follow the new choice after a restart.
 - **Linux only.** It has been tested on Arch Linux (GTK 4.24, libadwaita
   1.10, Wayland). The Debian/Ubuntu/Fedora/openSUSE instructions above follow
   those distributions' package names but have not been tested on real

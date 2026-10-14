@@ -73,11 +73,11 @@ pub struct ToolPage {
 /// Grupo que avisa das dependências que faltam, com o comando de instalação.
 fn missing_tools_group(missing: &[Tool]) -> adw::PreferencesGroup {
     let group = adw::PreferencesGroup::builder()
-        .title("Dependência ausente")
-        .description(
+        .title(tr!("Dependência ausente"))
+        .description(tr!(
             "Esta ferramenta não pode ser usada até que o componente abaixo seja instalado. Rode o comando em um \
-             terminal e reabra a ferramenta.",
-        )
+             terminal e reabra a ferramenta."
+        ))
         .build();
     for tool in missing {
         let row = widgets::plain_row(tool.label(), &tool.install_command());
@@ -85,7 +85,7 @@ fn missing_tools_group(missing: &[Tool]) -> adw::PreferencesGroup {
         row.add_prefix(&gtk::Image::from_icon_name("dialog-warning-symbolic"));
         group.add(&row);
     }
-    let more = gtk::Button::builder().label("Ver todas as dependências").halign(gtk::Align::Start).build();
+    let more = gtk::Button::builder().label(tr!("Ver todas as dependências")).halign(gtk::Align::Start).build();
     more.set_action_name(Some("win.dependencies"));
     more.add_css_class("flat");
     group.set_header_suffix(Some(&more));
@@ -94,22 +94,22 @@ fn missing_tools_group(missing: &[Tool]) -> adw::PreferencesGroup {
 
 fn files_group(info: &ToolInfo) -> (adw::PreferencesGroup, adw::ActionRow) {
     let add_button = gtk::Button::builder()
-        .label("Adicionar…")
+        .label(tr!("Adicionar…"))
         .valign(gtk::Align::Center)
-        .tooltip_text("Adicionar arquivos (Ctrl+O)")
+        .tooltip_text(tr!("Adicionar arquivos (Ctrl+O)"))
         .action_name("page.add")
         .build();
     add_button.add_css_class("flat");
     let group = adw::PreferencesGroup::builder()
-        .title(if info.multiple { "Arquivos" } else { "Arquivo" })
+        .title(if info.multiple { tr!("Arquivos") } else { tr!("Arquivo") })
         .header_suffix(&add_button)
         .build();
     let empty_row = widgets::plain_row(
-        "Nenhum arquivo",
+        tr!("Nenhum arquivo"),
         match info.accepts {
-            Accepts::Pdf => "Arraste PDFs para esta janela ou clique em Adicionar",
-            Accepts::Images => "Arraste imagens para esta janela ou clique em Adicionar",
-            Accepts::Office => "Arraste documentos, planilhas ou apresentações para esta janela",
+            Accepts::Pdf => tr!("Arraste PDFs para esta janela ou clique em Adicionar"),
+            Accepts::Images => tr!("Arraste imagens para esta janela ou clique em Adicionar"),
+            Accepts::Office => tr!("Arraste documentos, planilhas ou apresentações para esta janela"),
         },
     );
     empty_row.add_css_class("dim-label");
@@ -128,20 +128,20 @@ struct DestinationRows {
 
 fn destination_rows() -> DestinationRows {
     let group = adw::PreferencesGroup::builder()
-        .title("Destino")
-        .description(
+        .title(tr!("Destino"))
+        .description(tr!(
             "O original nunca é alterado. Se já existir um arquivo com o mesmo nome, o novo recebe um número, como \
-             “nome (2)”.",
-        )
+             “nome (2)”."
+        ))
         .build();
-    let folder = widgets::plain_row("Pasta", "A mesma do primeiro arquivo");
-    let reset = widgets::icon_button("edit-undo-symbolic", "Voltar a usar a pasta do arquivo original");
+    let folder = widgets::plain_row(tr!("Pasta"), tr!("A mesma do primeiro arquivo"));
+    let reset = widgets::icon_button("edit-undo-symbolic", tr!("Voltar a usar a pasta do arquivo original"));
     reset.set_visible(false);
-    let change = gtk::Button::builder().label("Alterar…").valign(gtk::Align::Center).build();
+    let change = gtk::Button::builder().label(tr!("Alterar…")).valign(gtk::Align::Center).build();
     folder.add_suffix(&reset);
     folder.add_suffix(&change);
     folder.add_prefix(&gtk::Image::from_icon_name("folder-symbolic"));
-    let name = adw::EntryRow::builder().title("Nome do arquivo (opcional)").build();
+    let name = adw::EntryRow::builder().title(tr!("Nome do arquivo (opcional)")).build();
     group.add(&folder);
     group.add(&name);
     DestinationRows { group, folder, reset, change, name }
@@ -157,7 +157,7 @@ pub fn build(app: &Rc<AppState>, info: &'static ToolInfo, files: Vec<PathBuf>) -
     body.set_margin_start(16);
     body.set_margin_end(16);
 
-    let summary = gtk::Label::builder().label(info.summary).wrap(true).xalign(0.0).build();
+    let summary = gtk::Label::builder().label(info.summary()).wrap(true).xalign(0.0).build();
     summary.add_css_class("dim-label");
     body.append(&summary);
 
@@ -170,7 +170,7 @@ pub fn build(app: &Rc<AppState>, info: &'static ToolInfo, files: Vec<PathBuf>) -
     let (files_group, empty_row) = files_group(info);
     body.append(&files_group);
 
-    let options_group = adw::PreferencesGroup::builder().title("Opções").build();
+    let options_group = adw::PreferencesGroup::builder().title(tr!("Opções")).build();
     let options = Options::build(info, &options_group);
     if !matches!(options, Options::None) || options_group.description().is_some() {
         body.append(&options_group);
@@ -208,12 +208,12 @@ pub fn build(app: &Rc<AppState>, info: &'static ToolInfo, files: Vec<PathBuf>) -
     let run_button = gtk::Button::builder()
         .label(run_label(info.id))
         .halign(gtk::Align::Center)
-        .tooltip_text("Executar (Ctrl+Enter)")
+        .tooltip_text(tr!("Executar (Ctrl+Enter)"))
         .sensitive(deps_ok)
         .build();
     run_button.add_css_class("pill");
     run_button.add_css_class("suggested-action");
-    let cancel_button = gtk::Button::builder().label("Cancelar").halign(gtk::Align::Center).visible(false).build();
+    let cancel_button = gtk::Button::builder().label(tr!("Cancelar")).halign(gtk::Align::Center).visible(false).build();
     cancel_button.add_css_class("pill");
     let progress = gtk::ProgressBar::builder().visible(false).show_text(false).build();
     let status = gtk::Label::builder().wrap(true).visible(false).justify(gtk::Justification::Center).build();
@@ -234,7 +234,7 @@ pub fn build(app: &Rc<AppState>, info: &'static ToolInfo, files: Vec<PathBuf>) -
     let toolbar = adw::ToolbarView::new();
     toolbar.add_top_bar(&header);
     toolbar.set_content(Some(&scroll));
-    let nav_page = adw::NavigationPage::with_tag(&toolbar, info.title, info.key);
+    let nav_page = adw::NavigationPage::with_tag(&toolbar, info.title(), info.key);
 
     let page = Rc::new(ToolPage {
         app: Rc::downgrade(app),
@@ -469,11 +469,17 @@ impl ToolPage {
             incoming.into_iter().partition(|f| catalog::extension_ok(self.info.accepts, f));
         if !rejected.is_empty() {
             let what = match self.info.accepts {
-                Accepts::Pdf => "somente PDFs",
-                Accepts::Images => "somente imagens JPEG, PNG, WebP, GIF, BMP ou TIFF",
-                Accepts::Office => "somente documentos, planilhas e apresentações",
+                Accepts::Pdf => tr!("somente PDFs"),
+                Accepts::Images => tr!("somente imagens JPEG, PNG, WebP, GIF, BMP ou TIFF"),
+                Accepts::Office => tr!("somente documentos, planilhas e apresentações"),
             };
-            self.toast(&format!("{} arquivo(s) ignorado(s): esta ferramenta aceita {what}.", rejected.len()));
+            self.toast(&trn!(
+                rejected.len(),
+                "{n} arquivo ignorado: esta ferramenta aceita {what}.",
+                "{n} arquivos ignorados: esta ferramenta aceita {what}.",
+                n = rejected.len(),
+                what
+            ));
         }
         {
             let mut files = self.files.borrow_mut();
@@ -490,7 +496,12 @@ impl ToolPage {
                     }
                 }
                 if skipped > 0 {
-                    self.toast(&format!("{skipped} arquivo(s) já estava(m) na lista."));
+                    self.toast(&trn!(
+                        skipped,
+                        "{skipped} arquivo já estava na lista.",
+                        "{skipped} arquivos já estavam na lista.",
+                        skipped
+                    ));
                 }
             }
         }
@@ -540,7 +551,7 @@ impl ToolPage {
             .file_info
             .borrow()
             .get(path)
-            .map_or_else(|| "Lendo…".into(), |f| file_line(path, f, is_pdf, unlock_tool));
+            .map_or_else(|| tr!("Lendo…").into(), |f| file_line(path, f, is_pdf, unlock_tool));
         let row = widgets::plain_row(&human::file_name(path), &subtitle);
         row.set_tooltip_text(Some(&unlock::original(path).to_string_lossy()));
         let reorderable = self.info.multiple && self.ordered_inputs() && count > 1;
@@ -549,7 +560,7 @@ impl ToolPage {
             n.add_css_class("badge");
             n.add_css_class("acento");
             n.set_valign(gtk::Align::Center);
-            n.set_tooltip_text(Some("Posição no resultado"));
+            n.set_tooltip_text(Some(tr!("Posição no resultado")));
             row.add_prefix(&n);
         }
         if thumbs::is_office(path) {
@@ -570,12 +581,12 @@ impl ToolPage {
             let handle = gtk::Image::from_icon_name("pdftoolbox-arrastar-symbolic");
             handle.add_css_class("dim-label");
             handle.set_cursor_from_name(Some("grab"));
-            handle.set_tooltip_text(Some("Arraste a linha para mudar a ordem"));
+            handle.set_tooltip_text(Some(tr!("Arraste a linha para mudar a ordem")));
             row.add_prefix(&handle);
         }
         if reorderable {
-            let up = widgets::icon_button("go-up-symbolic", "Mover para cima");
-            let down = widgets::icon_button("go-down-symbolic", "Mover para baixo");
+            let up = widgets::icon_button("go-up-symbolic", tr!("Mover para cima"));
+            let down = widgets::icon_button("go-down-symbolic", tr!("Mover para baixo"));
             up.set_sensitive(i > 0);
             down.set_sensitive(i + 1 < count);
             for (button, other) in [(&up, i.saturating_sub(1)), (&down, i + 1)] {
@@ -592,7 +603,7 @@ impl ToolPage {
             row.add_suffix(&down);
             self.connect_row_drag(&row, i);
         }
-        let remove = widgets::icon_button("list-remove-symbolic", "Remover da lista");
+        let remove = widgets::icon_button("list-remove-symbolic", tr!("Remover da lista"));
         remove.connect_clicked(glib::clone!(
             #[weak(rename_to = page)]
             self,
@@ -721,22 +732,22 @@ impl ToolPage {
                 }
             }
             Options::ToImages { dpi, .. } => {
-                let base = "Cada página vira um arquivo de imagem.";
                 let first = files.first().and_then(|f| Some((f, info.get(f)?.dims?)));
                 let text = match first {
                     Some((f, (w, h))) => {
                         let d = dpi.value();
                         let (pw, ph) = ((f64::from(w) / 72.0 * d).round(), (f64::from(h) / 72.0 * d).round());
-                        format!(
-                            "{base} Em {} ppp, a página 1 de “{}” terá {} × {} px (≈ {} megapixels).",
-                            d as u32,
-                            human::file_name(f),
-                            pw,
-                            ph,
-                            human::decimal(pw * ph / 1e6, 1)
+                        tr!(
+                            "Cada página vira um arquivo de imagem. Em {dpi} ppp, a página 1 de “{file}” terá \
+                             {width} × {height} px (≈ {megapixels} megapixels).",
+                            dpi = d as u32,
+                            file = human::file_name(f),
+                            width = pw,
+                            height = ph,
+                            megapixels = human::decimal(pw * ph / 1e6, 1)
                         )
                     }
-                    None => base.to_string(),
+                    None => tr!("Cada página vira um arquivo de imagem.").to_string(),
                 };
                 self.options_group.set_description(Some(&glib::markup_escape_text(&text)));
             }
@@ -744,29 +755,40 @@ impl ToolPage {
                 let text = match self.ocr_counts() {
                     Some((with_text, total)) => {
                         format!(
-                            "{} Leva alguns segundos por página.",
-                            texts::ocr_summary(with_text, total, skip.is_active())
+                            "{} {}",
+                            texts::ocr_summary(with_text, total, skip.is_active()),
+                            tr!("Leva alguns segundos por página.")
                         )
                     }
-                    None => "As páginas digitalizadas continuam como estão; o texto reconhecido entra numa \
-                             camada invisível por cima, que permite buscar e copiar."
-                        .into(),
+                    None => {
+                        tr!("As páginas digitalizadas continuam como estão; o texto reconhecido entra numa camada \
+                         invisível por cima, que permite buscar e copiar.")
+                        .into()
+                    }
                 };
                 self.options_group.set_description(Some(&text));
             }
             Options::Metadata(m) => {
                 self.options_group.set_description(Some(if m.remove_all.is_active() {
-                    "Título, autor, assunto, palavras-chave, programas e datas serão apagados."
+                    tr!("Título, autor, assunto, palavras-chave, programas e datas serão apagados.")
                 } else {
-                    "Campos deixados em branco são removidos do arquivo."
+                    tr!("Campos deixados em branco são removidos do arquivo.")
                 }));
             }
             Options::None if self.info.id == ToolId::Merge => {
                 let pages: Option<u32> = files.iter().map(|f| info.get(f).and_then(|i| i.pages)).sum();
-                let mut text =
-                    "Os arquivos são unidos na ordem da lista acima. Arraste as linhas ou use as setas para reordenar.".to_string();
+                let mut text = tr!(
+                    "Os arquivos são unidos na ordem da lista acima. Arraste as linhas ou use as setas para reordenar."
+                )
+                .to_string();
                 if let (Some(n), true) = (pages, files.len() >= 2) {
-                    text.push_str(&format!(" Resultado: um PDF com {n} páginas."));
+                    text.push(' ');
+                    text.push_str(&trn!(
+                        n as usize,
+                        "Resultado: um PDF com {n} página.",
+                        "Resultado: um PDF com {n} páginas.",
+                        n
+                    ));
                 }
                 self.options_group.set_description(Some(&text));
             }
@@ -834,8 +856,8 @@ impl ToolPage {
         self.dest_reset.set_visible(self.dest_custom.get());
         let label = match (&*self.dest_dir.borrow(), self.dest_custom.get()) {
             (Some(d), true) => widgets::path_label(d),
-            (Some(d), false) => format!("{} (pasta do original)", widgets::path_label(d)),
-            (None, _) => "A mesma do primeiro arquivo".into(),
+            (Some(d), false) => tr!("{folder} (pasta do original)", folder = widgets::path_label(d)),
+            (None, _) => tr!("A mesma do primeiro arquivo").into(),
         };
         self.dest_row.set_subtitle(&label);
     }
@@ -852,7 +874,7 @@ impl ToolPage {
         let files = self.files.borrow().clone();
         if files.len() < self.info.min_files {
             return Err(if self.info.min_files > 1 {
-                OpError::InvalidRange(format!("Adicione pelo menos {} arquivos.", self.info.min_files))
+                OpError::InvalidRange(tr!("Adicione pelo menos {n} arquivos.", n = self.info.min_files))
             } else {
                 OpError::NoInput
             });
@@ -864,9 +886,9 @@ impl ToolPage {
 /// Linha de detalhes de um arquivo da lista.
 fn file_line(path: &Path, facts: &FileFacts, is_pdf: bool, unlock_tool: bool) -> String {
     if facts.locked && !unlock_tool {
-        "🔒 Protegido por senha — adicione de novo e digite a senha".into()
+        format!("🔒 {}", tr!("Protegido por senha — adicione de novo e digite a senha"))
     } else if unlock::is_copy(path) {
-        format!("🔓 Aberto com a senha; o resultado sai sem senha · {}", facts.line(is_pdf))
+        format!("🔓 {} · {}", tr!("Aberto com a senha; o resultado sai sem senha"), facts.line(is_pdf))
     } else {
         facts.line(is_pdf)
     }
