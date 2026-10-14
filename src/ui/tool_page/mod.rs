@@ -19,7 +19,7 @@ use std::path::{Path, PathBuf};
 use std::rc::{Rc, Weak};
 
 use adw::prelude::*;
-use gtk::{gio, glib};
+use gtk::{gdk, gio, glib};
 
 use pdftoolbox::catalog::{self, Accepts, ToolId, ToolInfo};
 use pdftoolbox::engines::Tool;
@@ -565,6 +565,14 @@ impl ToolPage {
             thumb.set_margin_bottom(6);
             row.add_prefix(&thumb);
         }
+        // add_prefix põe cada prefixo à esquerda dos anteriores: a alça fica na ponta.
+        if reorderable {
+            let handle = gtk::Image::from_icon_name("pdftoolbox-arrastar-symbolic");
+            handle.add_css_class("dim-label");
+            handle.set_cursor_from_name(Some("grab"));
+            handle.set_tooltip_text(Some("Arraste a linha para mudar a ordem"));
+            row.add_prefix(&handle);
+        }
         if reorderable {
             let up = widgets::icon_button("go-up-symbolic", "Mover para cima");
             let down = widgets::icon_button("go-down-symbolic", "Mover para baixo");
@@ -582,6 +590,7 @@ impl ToolPage {
             }
             row.add_suffix(&up);
             row.add_suffix(&down);
+            self.connect_row_drag(&row, i);
         }
         let remove = widgets::icon_button("list-remove-symbolic", "Remover da lista");
         remove.connect_clicked(glib::clone!(
@@ -594,6 +603,54 @@ impl ToolPage {
         ));
         row.add_suffix(&remove);
         row
+    }
+
+    /// Arrastar a linha `i` com o mouse e soltá-la sobre outra põe o arquivo
+    /// na posição daquela (as setas continuam para quem usa o teclado).
+    fn connect_row_drag(self: &Rc<Self>, row: &adw::ActionRow, i: usize) {
+        let source = gtk::DragSource::new();
+        source.set_actions(gdk::DragAction::MOVE);
+        source.connect_prepare(move |_, _, _| Some(gdk::ContentProvider::for_value(&(i as u32).to_value())));
+        source.connect_drag_begin(|source, drag| {
+            let Some(row) = source.widget() else { return };
+            // Imagem fixa da linha antes de esmaecê-la no lugar de origem.
+            let shown = gtk::Picture::for_paintable(&gtk::WidgetPaintable::new(Some(&row)).current_image());
+            shown.set_size_request(row.width(), row.height());
+            shown.add_css_class("linha-arrastada");
+            gtk::DragIcon::for_drag(drag).set_child(Some(&shown));
+            row.add_css_class("arrastando");
+        });
+        source.connect_drag_end(|source, _, _| {
+            if let Some(row) = source.widget() {
+                row.remove_css_class("arrastando");
+            }
+        });
+        row.add_controller(source);
+        let target = gtk::DropTarget::new(u32::static_type(), gdk::DragAction::MOVE);
+        target.connect_drop(glib::clone!(
+            #[weak(rename_to = page)]
+            self,
+            #[upgrade_or]
+            false,
+            move |_, value, _, _| {
+                let Ok(from) = value.get::<u32>() else { return false };
+                page.move_file(from as usize, i);
+                true
+            }
+        ));
+        row.add_controller(target);
+    }
+
+    fn move_file(self: &Rc<Self>, from: usize, to: usize) {
+        {
+            let mut files = self.files.borrow_mut();
+            if from == to || from >= files.len() || to >= files.len() {
+                return;
+            }
+            let file = files.remove(from);
+            files.insert(to, file);
+        }
+        self.rebuild_files();
     }
 
     /// Lê páginas/dimensões em segundo plano e atualiza a linha.
@@ -707,7 +764,7 @@ impl ToolPage {
             Options::None if self.info.id == ToolId::Merge => {
                 let pages: Option<u32> = files.iter().map(|f| info.get(f).and_then(|i| i.pages)).sum();
                 let mut text =
-                    "Os arquivos são unidos na ordem da lista acima. Use as setas para reordenar.".to_string();
+                    "Os arquivos são unidos na ordem da lista acima. Arraste as linhas ou use as setas para reordenar.".to_string();
                 if let (Some(n), true) = (pages, files.len() >= 2) {
                     text.push_str(&format!(" Resultado: um PDF com {n} páginas."));
                 }

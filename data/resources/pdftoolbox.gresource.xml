@@ -21,5 +21,6 @@
     <file>icons/scalable/actions/pdftoolbox-marca-texto-symbolic.svg</file>
     <file>icons/scalable/actions/pdftoolbox-moldura-symbolic.svg</file>
     <file>icons/scalable/actions/pdftoolbox-ocr-symbolic.svg</file>
+    <file>icons/scalable/actions/pdftoolbox-arrastar-symbolic.svg</file>
   </gresource>
 </gresources>

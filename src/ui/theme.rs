@@ -144,6 +144,9 @@ entry:focus-within {{ outline-color: alpha({acento}, 0.7); }}
   box-shadow: none; border-radius: 12px; }}
 list.boxed-list > row {{ background: none; }}
 list.boxed-list > row:not(:last-child) {{ border-bottom: 1px solid alpha({borda}, 0.25); }}
+list.boxed-list > row:drop(active) {{ background: alpha({acento}, 0.14); box-shadow: inset 0 0 0 2px alpha({acento}, 0.8); }}
+list.boxed-list > row.arrastando {{ opacity: 0.45; }}
+.linha-arrastada {{ background: {fundo_header}; border-radius: 12px; box-shadow: 0 0 0 1px alpha({acento}, 0.7); }}
 .tool-card {{ padding: 14px; }}
 button.card.tool-card:hover {{ background: alpha({acento}, 0.10); border-color: alpha({acento}, 0.7); }}
 .tool-card .tool-icon, .icone-documento {{ color: {acento}; }}

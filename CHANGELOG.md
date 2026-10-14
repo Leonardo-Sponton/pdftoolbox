@@ -2,6 +2,12 @@
 
 ## Não lançado
 
+### Adicionado
+- **Mesclar e Imagens para PDF:** a ordem dos arquivos pode ser mudada
+  arrastando a linha com o mouse (alça ⠿ à esquerda); a linha sob o cursor
+  fica destacada e o arquivo assume a posição dela. As setas continuam para
+  quem usa o teclado.
+
 ### Alterado
 - **Organização interna do código**, sem mudança de comportamento: a página
   de ferramenta, o Anotar e o gerador de PDF foram divididos em módulos por

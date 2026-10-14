@@ -242,7 +242,7 @@ impl Options {
         match info.id {
             ToolId::Merge => {
                 group.set_description(Some(
-                    "Os arquivos são unidos na ordem da lista acima. Use as setas para reordenar.",
+                    "Os arquivos são unidos na ordem da lista acima. Arraste as linhas ou use as setas para reordenar.",
                 ));
                 Options::None
             }

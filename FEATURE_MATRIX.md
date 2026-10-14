@@ -13,7 +13,7 @@ gerado foi conferido.
 
 | Recurso | Estado | Motor | Observações |
 |---|---|---|---|
-| Mesclar vários PDFs | Implementado e testado | qpdf | Ordem por setas; duplicatas permitidas; UI verificada |
+| Mesclar vários PDFs | Implementado e testado | qpdf | Ordem por setas ou arrastando as linhas com o mouse (também em Imagens→PDF); duplicatas permitidas; UI verificada (setas pelo teclado; arrastar com o mouse ainda não verificado — não automatizável aqui) |
 | Dividir por intervalos | Implementado e testado | qpdf | Também “a cada N” e “uma por página”; UI verificada |
 | Extrair páginas | Implementado e testado | qpdf | Ordem digitada; opção um-arquivo-por-página; UI verificada |
 | Um arquivo por página | Implementado e testado | qpdf | Mais de 3 saídas vão para uma subpasta |
