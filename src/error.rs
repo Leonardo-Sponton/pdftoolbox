@@ -3,6 +3,7 @@ use std::io;
 use std::path::{Path, PathBuf};
 
 use crate::engines::Tool;
+use crate::human;
 
 pub type OpResult<T> = Result<T, OpError>;
 
@@ -58,7 +59,7 @@ impl OpError {
     }
 
     pub fn io_path(action: &str, path: &Path, source: io::Error) -> Self {
-        Self::io(format!("{action} “{}”", display_name(path)), source)
+        Self::io(format!("{action} “{}”", human::file_name(path)), source)
     }
 
     pub fn title(&self) -> &'static str {
@@ -99,10 +100,6 @@ impl OpError {
             other => format!("{other:?}"),
         }
     }
-
-    pub fn is_cancelled(&self) -> bool {
-        matches!(self, OpError::Cancelled)
-    }
 }
 
 enum IoKind {
@@ -115,8 +112,8 @@ enum IoKind {
 
 fn io_kind(e: &io::Error) -> IoKind {
     match e.raw_os_error() {
-        Some(28) | Some(122) => return IoKind::NoSpace, // ENOSPC, EDQUOT
-        Some(30) => return IoKind::ReadOnly,            // EROFS
+        Some(28 | 122) => return IoKind::NoSpace, // ENOSPC, EDQUOT
+        Some(30) => return IoKind::ReadOnly,      // EROFS
         _ => {}
     }
     match e.kind() {
@@ -126,10 +123,6 @@ fn io_kind(e: &io::Error) -> IoKind {
         io::ErrorKind::ReadOnlyFilesystem => IoKind::ReadOnly,
         _ => IoKind::Other,
     }
-}
-
-pub fn display_name(path: &Path) -> String {
-    path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_else(|| path.to_string_lossy().into_owned())
 }
 
 impl fmt::Display for OpError {
@@ -143,32 +136,36 @@ impl fmt::Display for OpError {
                 t.label()
             ),
             OpError::InvalidPdf { file, .. } => {
-                write!(f, "“{}” não é um PDF válido ou está danificado demais para ser processado.", display_name(file))
+                write!(
+                    f,
+                    "“{}” não é um PDF válido ou está danificado demais para ser processado.",
+                    human::file_name(file)
+                )
             }
             OpError::PasswordProtected(file) => write!(
                 f,
                 "“{}” está protegido por senha. Adicione-o de novo à ferramenta e digite a senha \
                  quando ela for pedida, ou use “Remover senha” para gravar uma cópia sem senha.",
-                display_name(file)
+                human::file_name(file)
             ),
             OpError::WrongPassword(file) => write!(
                 f,
                 "A senha informada não abre “{}”. Confira maiúsculas, minúsculas e acentos.",
-                display_name(file)
+                human::file_name(file)
             ),
             OpError::OwnerPasswordRequired(file) => write!(
                 f,
                 "A senha informada abre “{}”, mas o autor restringiu impressão, cópia ou edição. \
                  Para trabalhar nele ou remover a proteção, é preciso a senha de permissões (do proprietário).",
-                display_name(file)
+                human::file_name(file)
             ),
             OpError::NotEncrypted(file) => {
-                write!(f, "“{}” não está protegido por senha; não há o que remover.", display_name(file))
+                write!(f, "“{}” não está protegido por senha; não há o que remover.", human::file_name(file))
             }
             OpError::UnsupportedImage { file, .. } => write!(
                 f,
                 "Não foi possível ler “{}” como imagem. Formatos aceitos: JPEG, PNG, BMP, GIF, WebP e TIFF.",
-                display_name(file)
+                human::file_name(file)
             ),
             OpError::InvalidRange(msg) => write!(f, "{msg}"),
             OpError::PageOutOfRange { page, total } => write!(

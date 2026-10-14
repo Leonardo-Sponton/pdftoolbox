@@ -6,9 +6,8 @@
 //! português e as demais línguas da Europa Ocidental. Caracteres fora disso
 //! viram “?” e são informados à interface antes de executar.
 
-use crate::pdfwriter::{OverlayPage, TextMark};
+use crate::pdfwriter::{MM, OverlayPage, TextMark};
 
-const MM: f32 = 72.0 / 25.4;
 /// Altura das maiúsculas da Helvetica, em fração do corpo.
 const CAP_HEIGHT: f32 = 0.718;
 
@@ -104,13 +103,12 @@ pub fn encode(text: &str) -> (Vec<u8>, Vec<char>) {
             _ if (0x20..=0x7E).contains(&code) || (0xA0..=0xFF).contains(&code) => Some(code as u8),
             _ => WIN_ANSI_HIGH.iter().find(|(_, ch)| *ch == c).map(|(b, _)| *b),
         };
-        match byte {
-            Some(b) => bytes.push(b),
-            None => {
-                bytes.push(b'?');
-                if !missing.contains(&c) {
-                    missing.push(c);
-                }
+        if let Some(b) = byte {
+            bytes.push(b)
+        } else {
+            bytes.push(b'?');
+            if !missing.contains(&c) {
+                missing.push(c);
             }
         }
     }

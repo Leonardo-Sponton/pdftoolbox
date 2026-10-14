@@ -5,14 +5,13 @@ use std::path::{Path, PathBuf};
 use std::time::Instant;
 
 use image::{ImageBuffer, Rgb};
+use pdftoolbox::human;
 use pdftoolbox::jobs::JobCtx;
-use pdftoolbox::operations::{
-    CompressLevel, Destination, ImageFormat, ImageLayout, Request, SplitMode, execute, human_size,
-};
+use pdftoolbox::operations::{CompressLevel, Destination, ImageFormat, ImageLayout, Request, SplitMode, execute};
 use pdftoolbox::pdfwriter::{A4_POINTS, text_pdf};
 
 fn size(p: &Path) -> String {
-    human_size(std::fs::metadata(p).map(|m| m.len()).unwrap_or(0))
+    human::size(std::fs::metadata(p).map_or(0, |m| m.len()))
 }
 
 fn time(label: &str, input: &str, f: impl FnOnce()) {

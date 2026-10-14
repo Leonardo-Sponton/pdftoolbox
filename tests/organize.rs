@@ -219,7 +219,7 @@ fn never_overwrites_existing_files_or_the_original() {
     // Nenhum arquivo temporário .part ficou para trás.
     let leftovers: Vec<_> = std::fs::read_dir(&sb.root)
         .unwrap()
-        .filter_map(|e| e.ok())
+        .filter_map(std::result::Result::ok)
         .filter(|e| e.file_name().to_string_lossy().ends_with(".part"))
         .collect();
     assert!(leftovers.is_empty());

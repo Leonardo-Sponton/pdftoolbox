@@ -17,7 +17,7 @@ use std::path::PathBuf;
 use std::process::{Command, Stdio};
 use std::sync::OnceLock;
 use std::thread;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use crate::error::{OpError, OpResult};
 use crate::jobs::CancelToken;
@@ -106,8 +106,7 @@ impl Tool {
 
     /// Procura o executável no PATH.
     pub fn find(self) -> Option<PathBuf> {
-        let path = std::env::var_os("PATH")?;
-        std::env::split_paths(&path).map(|dir| dir.join(self.program())).find(|p| is_executable(p))
+        find_in_path(self.program())
     }
 
     pub fn require(self) -> OpResult<PathBuf> {
@@ -140,6 +139,12 @@ pub fn install_line(deb: &str, arch: &str, fedora: &str) -> String {
         Distro::Fedora => format!("sudo dnf install {fedora}"),
         Distro::Unknown => format!("Debian/Ubuntu: sudo apt install {deb} · Arch: sudo pacman -S {arch}"),
     }
+}
+
+/// Primeiro executável chamado `program` nas pastas do PATH.
+fn find_in_path(program: &str) -> Option<PathBuf> {
+    let path = std::env::var_os("PATH")?;
+    std::env::split_paths(&path).map(|dir| dir.join(program)).find(|p| is_executable(p))
 }
 
 fn is_executable(p: &std::path::Path) -> bool {
@@ -176,7 +181,6 @@ pub struct ToolOutput {
     pub code: Option<i32>,
     pub stdout: Vec<u8>,
     pub stderr: String,
-    pub elapsed: Duration,
 }
 
 /// Limite de stderr guardado (o fim é o mais útil).
@@ -218,8 +222,7 @@ fn unshare_path() -> Option<&'static PathBuf> {
     static FOUND: OnceLock<Option<PathBuf>> = OnceLock::new();
     FOUND
         .get_or_init(|| {
-            let path = std::env::var_os("PATH")?;
-            let exe = std::env::split_paths(&path).map(|d| d.join("unshare")).find(|p| is_executable(p))?;
+            let exe = find_in_path("unshare")?;
             let ok = Command::new(&exe)
                 .args(["--user", "--map-current-user", "--net", "--", "true"])
                 .stdin(Stdio::null())
@@ -243,7 +246,6 @@ where
     S: AsRef<OsStr>,
 {
     cancel.check()?;
-    let start = Instant::now();
     if tool == Tool::Tesseract {
         // Uma thread por processo: as páginas já são reconhecidas em paralelo.
         cmd.env("OMP_THREAD_LIMIT", "1");
@@ -261,8 +263,8 @@ where
         .map_err(|e| OpError::io(format!("iniciar {}", tool.program()), e))?;
 
     let pid = child.id();
-    running().lock().unwrap_or_else(|e| e.into_inner()).push(pid);
-    let unregister = || running().lock().unwrap_or_else(|e| e.into_inner()).retain(|p| *p != pid);
+    running().lock().unwrap_or_else(std::sync::PoisonError::into_inner).push(pid);
+    let unregister = || running().lock().unwrap_or_else(std::sync::PoisonError::into_inner).retain(|p| *p != pid);
     let mut out_pipe = child.stdout.take().expect("stdout piped");
     let mut err_pipe = child.stderr.take().expect("stderr piped");
     let out_reader = thread::spawn(move || {
@@ -302,7 +304,7 @@ where
     let stdout = out_reader.join().unwrap_or_default();
     let stderr = err_reader.join().unwrap_or_default();
     let stderr = String::from_utf8_lossy(&stderr[stderr.len().saturating_sub(STDERR_LIMIT)..]).into_owned();
-    Ok(ToolOutput { code: status.code(), stdout, stderr, elapsed: start.elapsed() })
+    Ok(ToolOutput { code: status.code(), stdout, stderr })
 }
 
 /// Grupos de processos em execução, para encerrá-los se o programa fechar
@@ -314,7 +316,7 @@ fn running() -> &'static std::sync::Mutex<Vec<u32>> {
 
 /// Encerra todos os processos externos ainda em execução. Chamado ao sair.
 pub fn kill_all_running() {
-    let groups = std::mem::take(&mut *running().lock().unwrap_or_else(|e| e.into_inner()));
+    let groups = std::mem::take(&mut *running().lock().unwrap_or_else(std::sync::PoisonError::into_inner));
     for pid in groups {
         kill_group(pid);
     }

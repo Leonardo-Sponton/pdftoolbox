@@ -8,6 +8,7 @@ pub mod catalog;
 pub mod deskew;
 pub mod engines;
 pub mod error;
+pub mod human;
 pub mod jobs;
 pub mod operations;
 pub mod pages;

@@ -80,13 +80,16 @@ struct SlotGuard;
 impl SlotGuard {
     fn acquire(cancel: &CancelToken) -> Option<Self> {
         let s = slots();
-        let mut used = s.used.lock().unwrap_or_else(|e| e.into_inner());
+        let mut used = s.used.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
         while *used >= MAX_CONCURRENT {
             if cancel.is_cancelled() {
                 return None;
             }
-            used =
-                s.freed.wait_timeout(used, std::time::Duration::from_millis(200)).unwrap_or_else(|e| e.into_inner()).0;
+            used = s
+                .freed
+                .wait_timeout(used, std::time::Duration::from_millis(200))
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .0;
         }
         *used += 1;
         Some(SlotGuard)
@@ -96,7 +99,7 @@ impl SlotGuard {
 impl Drop for SlotGuard {
     fn drop(&mut self) {
         let s = slots();
-        *s.used.lock().unwrap_or_else(|e| e.into_inner()) -= 1;
+        *s.used.lock().unwrap_or_else(std::sync::PoisonError::into_inner) -= 1;
         s.freed.notify_one();
     }
 }
@@ -109,24 +112,26 @@ where
     let (tx, rx) = async_channel::unbounded();
     let cancel = CancelToken::new();
     let token = cancel.clone();
-    std::thread::Builder::new()
-        .name("pdftoolbox-tarefa".into())
-        .spawn(move || {
-            let _ = tx.send_blocking(JobEvent::Queued);
-            let result = match SlotGuard::acquire(&token) {
-                None => Err(OpError::Cancelled),
-                Some(_slot) => {
-                    let progress_tx = tx.clone();
-                    let ctx = JobCtx::new(token, move |f, text| {
-                        let _ = progress_tx.send_blocking(JobEvent::Progress(f, text.to_string()));
-                    });
-                    catch_unwind(AssertUnwindSafe(|| work(&ctx))).unwrap_or_else(|_| {
-                        Err(OpError::OutputInvalid("falha interna inesperada durante o processamento".into()))
-                    })
-                }
-            };
-            let _ = tx.send_blocking(JobEvent::Finished(result));
-        })
-        .expect("criar thread de trabalho");
+    let tx_spawn_error = tx.clone();
+    let spawned = std::thread::Builder::new().name("pdftoolbox-tarefa".into()).spawn(move || {
+        let _ = tx.send_blocking(JobEvent::Queued);
+        let result = match SlotGuard::acquire(&token) {
+            None => Err(OpError::Cancelled),
+            Some(_slot) => {
+                let progress_tx = tx.clone();
+                let ctx = JobCtx::new(token, move |f, text| {
+                    let _ = progress_tx.send_blocking(JobEvent::Progress(f, text.to_string()));
+                });
+                catch_unwind(AssertUnwindSafe(|| work(&ctx))).unwrap_or_else(|_| {
+                    Err(OpError::OutputInvalid("falha interna inesperada durante o processamento".into()))
+                })
+            }
+        };
+        let _ = tx.send_blocking(JobEvent::Finished(result));
+    });
+    // Sem thread (limite de processos do sistema): a tarefa termina com o erro.
+    if let Err(e) = spawned {
+        let _ = tx_spawn_error.send_blocking(JobEvent::Finished(Err(OpError::io("iniciar a tarefa", e))));
+    }
     JobHandle { cancel, events: rx }
 }

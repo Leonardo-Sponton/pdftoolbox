@@ -50,6 +50,11 @@ pub struct Settings {
 
 const MAX_RECENT: usize = 4;
 
+/// “a, b,,c” → [a, b, c].
+fn parse_list(value: &str) -> Vec<String> {
+    value.split(',').map(str::trim).filter(|k| !k.is_empty()).map(String::from).collect()
+}
+
 impl Settings {
     fn path() -> PathBuf {
         config_dir().join("config")
@@ -62,12 +67,8 @@ impl Settings {
             let Some((k, v)) = line.split_once('=') else { continue };
             match k.trim() {
                 "tema" => s.theme = Theme::from_key(v.trim()),
-                "recentes" => {
-                    s.recent = v.split(',').map(str::trim).filter(|k| !k.is_empty()).map(String::from).collect()
-                }
-                "ocr_idiomas" => {
-                    s.ocr_languages = v.split(',').map(str::trim).filter(|k| !k.is_empty()).map(String::from).collect()
-                }
+                "recentes" => s.recent = parse_list(v),
+                "ocr_idiomas" => s.ocr_languages = parse_list(v),
                 "ultima_pasta" => s.last_dir = Some(PathBuf::from(v)).filter(|p| p.is_dir()),
                 _ => {}
             }

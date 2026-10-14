@@ -11,10 +11,11 @@ use std::time::SystemTime;
 use gtk::prelude::Cast;
 use gtk::{gdk, glib};
 
+use pdftoolbox::catalog::{self, Accepts};
 use pdftoolbox::engines::{poppler, qpdf};
-use pdftoolbox::error::display_name;
+use pdftoolbox::human;
 use pdftoolbox::jobs::CancelToken;
-use pdftoolbox::operations::human_size;
+use pdftoolbox::operations;
 use pdftoolbox::storage::JobDir;
 use pdftoolbox::{OpError, pdfwriter};
 
@@ -132,7 +133,7 @@ pub async fn first_page(path: &Path) -> Option<gdk::Texture> {
     if is_office(path) {
         return None;
     }
-    if pdftoolbox::catalog::extension_ok(pdftoolbox::catalog::Accepts::Pdf, path) {
+    if is_pdf(path) {
         return pdf_pages(path, 1, 1, &CancelToken::new()).await.into_iter().next().map(|(_, t)| t);
     }
     let p = path.to_path_buf();
@@ -166,7 +167,7 @@ impl FileFacts {
 
     /// Linha curta: “308 páginas · 6,5 MB” ou “1920 × 1080 px · 2 MB”.
     pub fn line(&self, is_pdf: bool) -> String {
-        let size = self.size.map(human_size);
+        let size = self.size.map(human::size);
         if self.locked {
             return match size {
                 Some(s) => format!("🔒 Protegido por senha · {s}"),
@@ -210,7 +211,7 @@ pub fn facts_blocking(path: &Path) -> FileFacts {
         }
     }
     let cancel = CancelToken::new();
-    if pdftoolbox::catalog::extension_ok(pdftoolbox::catalog::Accepts::Pdf, path) {
+    if is_pdf(path) {
         match qpdf::page_count(path, &cancel) {
             Ok(n) => facts.pages = Some(n),
             Err(OpError::PasswordProtected(_)) => facts.locked = true,
@@ -219,7 +220,7 @@ pub fn facts_blocking(path: &Path) -> FileFacts {
         }
         if facts.problem.is_none() && !facts.locked {
             facts.dims = poppler::page_size(path, 1, &cancel).ok();
-            facts.text_pages = pdftoolbox::operations::text_pages(path, &cancel).ok();
+            facts.text_pages = operations::text_pages(path, &cancel).ok();
         }
     } else if is_office(path) {
         // Só o tamanho: ler páginas exigiria converter o documento.
@@ -241,7 +242,7 @@ pub async fn facts(path: &Path) -> FileFacts {
 pub fn picture(path: &Path, max_w: i32, max_h: i32) -> PageThumb {
     use gtk::prelude::*;
     let thumb = PageThumb::new(max_w, max_h);
-    thumb.update_property(&[gtk::accessible::Property::Label(&format!("Miniatura de {}", display_name(path)))]);
+    thumb.update_property(&[gtk::accessible::Property::Label(&format!("Miniatura de {}", human::file_name(path)))]);
     if let Some(t) = cached(path, 1) {
         thumb.set_texture(Some(&t));
         return thumb;
@@ -254,14 +255,14 @@ pub fn picture(path: &Path, max_w: i32, max_h: i32) -> PageThumb {
         match texture {
             Some(texture) => thumb.set_texture(Some(&texture)),
             // Sem miniatura: se for por senha, um cadeado explica o porquê.
-            None if pdftoolbox::catalog::extension_ok(pdftoolbox::catalog::Accepts::Pdf, &path) => {
+            None if is_pdf(&path) => {
                 let p = path.clone();
                 let kind = widgets::blocking(move || qpdf::encryption(&p, &CancelToken::new()).ok()).await;
                 if kind == Some(qpdf::Encryption::Password) {
                     thumb.add_css_class("miniatura-bloqueada");
                     thumb.update_property(&[gtk::accessible::Property::Label(&format!(
                         "{} está protegido por senha",
-                        display_name(&path)
+                        human::file_name(&path)
                     ))]);
                 }
             }
@@ -272,7 +273,19 @@ pub fn picture(path: &Path, max_w: i32, max_h: i32) -> PageThumb {
 }
 
 pub fn is_office(path: &Path) -> bool {
-    pdftoolbox::catalog::extension_ok(pdftoolbox::catalog::Accepts::Office, path)
+    catalog::extension_ok(Accepts::Office, path)
+}
+
+fn is_pdf(path: &Path) -> bool {
+    catalog::extension_ok(Accepts::Pdf, path)
+}
+
+/// Renderiza a página `page` com lado maior `side` px numa pasta
+/// temporária (bloqueia: chame fora da thread da interface).
+pub fn render_page(path: &Path, page: u32, side: u32, cancel: &CancelToken) -> Option<image::DynamicImage> {
+    let dir = JobDir::new().ok()?;
+    let files = poppler::thumbnails(path, page, page, side, dir.path(), cancel).ok()?;
+    image::open(files.first()?).ok()
 }
 
 /// Página `page` de `path` com a camada de carimbo aplicada, renderizada com
@@ -296,8 +309,7 @@ pub async fn stamped_page(
         pdfwriter::overlay_pdf(&layer_pdf, &[layer]).ok()?;
         let stamped = dir.file("carimbado.pdf");
         qpdf::overlay(&single, &layer_pdf, &stamped, &cancel).ok()?;
-        let files = poppler::thumbnails(&stamped, 1, 1, size, dir.path(), &cancel).ok()?;
-        image::open(files.first()?).ok().map(Pixels::from_image)
+        render_page(&stamped, 1, size, &cancel).map(Pixels::from_image)
     })
     .await?;
     Some(pixels.texture())
@@ -307,12 +319,8 @@ pub async fn stamped_page(
 /// visualizador ampliado. Não entra no cache das miniaturas.
 pub async fn large_page(path: &Path, page: u32, size: u32) -> Option<gdk::Texture> {
     let p = path.to_path_buf();
-    let pixels = widgets::blocking(move || -> Option<Pixels> {
-        let dir = JobDir::new().ok()?;
-        let files = poppler::thumbnails(&p, page, page, size, dir.path(), &CancelToken::new()).ok()?;
-        image::open(files.first()?).ok().map(Pixels::from_image)
-    })
-    .await?;
+    let pixels =
+        widgets::blocking(move || render_page(&p, page, size, &CancelToken::new()).map(Pixels::from_image)).await?;
     Some(pixels.texture())
 }
 
@@ -328,7 +336,7 @@ pub async fn first_text_page(path: &Path, layout: bool) -> Option<Option<(u32, S
     let p = path.to_path_buf();
     widgets::blocking(move || {
         let cancel = CancelToken::new();
-        let flags = pdftoolbox::operations::pages_with_text(&p, &cancel).ok()?;
+        let flags = operations::pages_with_text(&p, &cancel).ok()?;
         let Some(i) = flags.iter().position(|&t| t) else { return Some(None) };
         let page = i as u32 + 1;
         poppler::page_text(&p, page, layout, &cancel).ok().map(|t| Some((page, t)))

@@ -19,28 +19,29 @@ use crate::error::{OpError, OpResult};
 static COUNTER: AtomicU64 = AtomicU64::new(0);
 
 fn unique_token() -> String {
-    let nanos = SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_nanos()).unwrap_or(0);
+    let nanos = SystemTime::now().duration_since(UNIX_EPOCH).map_or(0, |d| d.as_nanos());
     format!("{}-{}-{:x}", std::process::id(), COUNTER.fetch_add(1, Ordering::Relaxed), nanos & 0xffff_ffff)
+}
+
+/// `$<variable>/pdftoolbox`, ou `~/<fallback>/pdftoolbox` quando a variável
+/// XDG não existe ou não é um caminho absoluto.
+fn xdg_dir(variable: &str, fallback: &str) -> PathBuf {
+    std::env::var_os(variable)
+        .map(PathBuf::from)
+        .filter(|p| p.is_absolute())
+        .or_else(|| std::env::var_os("HOME").map(|h| PathBuf::from(h).join(fallback)))
+        .unwrap_or_else(std::env::temp_dir)
+        .join("pdftoolbox")
 }
 
 /// `$XDG_CACHE_HOME/pdftoolbox` (ou `~/.cache/pdftoolbox`).
 pub fn cache_dir() -> PathBuf {
-    std::env::var_os("XDG_CACHE_HOME")
-        .map(PathBuf::from)
-        .filter(|p| p.is_absolute())
-        .or_else(|| std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".cache")))
-        .unwrap_or_else(std::env::temp_dir)
-        .join("pdftoolbox")
+    xdg_dir("XDG_CACHE_HOME", ".cache")
 }
 
 /// `$XDG_CONFIG_HOME/pdftoolbox` (ou `~/.config/pdftoolbox`).
 pub fn config_dir() -> PathBuf {
-    std::env::var_os("XDG_CONFIG_HOME")
-        .map(PathBuf::from)
-        .filter(|p| p.is_absolute())
-        .or_else(|| std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".config")))
-        .unwrap_or_else(std::env::temp_dir)
-        .join("pdftoolbox")
+    xdg_dir("XDG_CONFIG_HOME", ".config")
 }
 
 fn jobs_root() -> PathBuf {
@@ -55,8 +56,7 @@ pub fn unlocked_root() -> PathBuf {
     std::env::var_os("XDG_RUNTIME_DIR")
         .map(PathBuf::from)
         .filter(|p| p.is_absolute() && p.is_dir())
-        .map(|p| p.join("pdftoolbox").join("desbloqueados"))
-        .unwrap_or_else(|| cache_dir().join("desbloqueados"))
+        .map_or_else(|| cache_dir().join("desbloqueados"), |p| p.join("pdftoolbox").join("desbloqueados"))
 }
 
 fn temp_roots() -> [PathBuf; 2] {
@@ -182,7 +182,7 @@ pub fn sanitize_file_name(name: &str, extension: &str) -> String {
 
 /// Nome do arquivo sem extensão, para compor nomes de saída.
 pub fn stem(path: &Path) -> String {
-    path.file_stem().map(|s| s.to_string_lossy().into_owned()).unwrap_or_else(|| "documento".into())
+    path.file_stem().map_or_else(|| "documento".into(), |s| s.to_string_lossy().into_owned())
 }
 
 fn numbered(name: &str, n: u32) -> String {
@@ -193,11 +193,6 @@ fn numbered(name: &str, n: u32) -> String {
         Some(dot) if dot > 0 => format!("{} ({n}){}", &name[..dot], &name[dot..]),
         _ => format!("{name} ({n})"),
     }
-}
-
-/// Primeiro caminho livre em `dir` para `name`, sem criar nada.
-pub fn free_path(dir: &Path, name: &str) -> PathBuf {
-    (1..).map(|n| dir.join(numbered(name, n))).find(|p| fs::symlink_metadata(p).is_err()).expect("sequência infinita")
 }
 
 /// Verifica se é possível criar arquivos em `dir`.

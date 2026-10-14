@@ -5,7 +5,7 @@ use std::path::{Path, PathBuf};
 
 use serde_json::{Map, Value, json};
 
-use super::{Destination, Outcome, batch, output_name, verify_pdf};
+use super::{Destination, Outcome, batch, batch_output_name, output_name, verify_pdf};
 use crate::annotate::{self, Annotation};
 use crate::engines::{poppler, qpdf};
 use crate::error::{OpError, OpResult};
@@ -66,7 +66,7 @@ fn apply_layer(
         qpdf::overlay(input, &layer_pdf, &tmp, &ctx.cancel)?;
         verify_pdf(&tmp, total, ctx)?;
         let base = format!("{} - {suffix}", stem(input));
-        let name = if n == 1 { output_name(dest, &base, "pdf") } else { storage::sanitize_file_name(&base, "pdf") };
+        let name = batch_output_name(dest, n, &base, "pdf");
         outcome.push(storage::commit(&tmp, &dest.dir, &name)?);
         Ok(())
     })
@@ -148,7 +148,7 @@ pub fn unsupported_chars(missing: &[char]) -> String {
 
 /// Data atual no fuso local, no formato de data do PDF.
 fn pdf_date_now() -> String {
-    let secs = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0);
+    let secs = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_secs());
     pdf_date(secs, local_offset(secs))
 }
 
@@ -186,6 +186,36 @@ fn pdf_date(secs: u64, offset: i64) -> String {
     format!("D:{year:04}{month:02}{day:02}{:02}{:02}{:02}{zone}", rem / 3600, rem % 3600 / 60, rem % 60)
 }
 
+/// Chaves do trailer que pertencem ao documento; as da tabela de
+/// referências o qpdf refaz. Sem /Size, o qpdf grava uma tabela de
+/// referências inválida.
+fn document_keys(trailer: &Value) -> Map<String, Value> {
+    trailer
+        .as_object()
+        .map(|m| {
+            m.iter()
+                .filter(|(k, _)| matches!(k.as_str(), "/Root" | "/ID" | "/Size"))
+                .map(|(k, v)| (k.clone(), v.clone()))
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+/// Atualização no formato JSON v2 do qpdf com `objects` (trailer e objetos).
+fn qpdf_update(max_object: u64, objects: Map<String, Value>) -> Value {
+    json!({
+        "qpdf": [
+            {
+                "jsonversion": 2,
+                "pushedinheritedpageresources": false,
+                "calledgetallpages": false,
+                "maxobjectid": max_object
+            },
+            objects
+        ]
+    })
+}
+
 /// Monta a atualização JSON do qpdf: um dicionário de informações novo
 /// (cópia do atual com os campos alterados) e o trailer apontando para ele.
 /// Editar o objeto existente não serve: quando ele está dentro de um fluxo de
@@ -213,66 +243,29 @@ fn info_update(
     }
     info.insert("/ModDate".into(), Value::String(format!("u:{now}")));
     let id = format!("{} 0 R", max_object + 1);
-    // Só as chaves do documento; as da tabela de referências o qpdf refaz.
-    // Sem /Size, o qpdf grava uma tabela de referências inválida.
-    let mut t: Map<String, Value> = trailer
-        .as_object()
-        .map(|m| {
-            m.iter()
-                .filter(|(k, _)| matches!(k.as_str(), "/Root" | "/ID" | "/Size"))
-                .map(|(k, v)| (k.clone(), v.clone()))
-                .collect()
-        })
-        .unwrap_or_default();
+    let mut t = document_keys(trailer);
     t.insert("/Info".into(), Value::String(id.clone()));
     t.insert("/Size".into(), json!(max_object + 2));
     let mut objects = Map::new();
     objects.insert("trailer".into(), json!({ "value": t }));
     objects.insert(format!("obj:{id}"), json!({ "value": info }));
-    json!({
-        "qpdf": [
-            {
-                "jsonversion": 2,
-                "pushedinheritedpageresources": false,
-                "calledgetallpages": false,
-                "maxobjectid": max_object
-            },
-            objects
-        ]
-    })
+    qpdf_update(max_object, objects)
 }
 
 /// Atualização que regrava o trailer sem a chave /Info.
 fn trailer_without_info(trailer: &Value, max_object: u64) -> Value {
-    let t: Map<String, Value> = trailer
-        .as_object()
-        .map(|m| {
-            m.iter()
-                .filter(|(k, _)| matches!(k.as_str(), "/Root" | "/ID" | "/Size"))
-                .map(|(k, v)| (k.clone(), v.clone()))
-                .collect()
-        })
-        .unwrap_or_default();
-    json!({
-        "qpdf": [
-            {
-                "jsonversion": 2,
-                "pushedinheritedpageresources": false,
-                "calledgetallpages": false,
-                "maxobjectid": max_object
-            },
-            { "trailer": { "value": t } }
-        ]
-    })
+    let mut objects = Map::new();
+    objects.insert("trailer".into(), json!({ "value": document_keys(trailer) }));
+    qpdf_update(max_object, objects)
 }
 
-fn object_value(input: &Path, id: &str, ctx: &JobCtx) -> OpResult<Option<Map<String, Value>>> {
-    let args: Vec<std::ffi::OsString> =
-        vec!["--json=2".into(), "--json-key=qpdf".into(), format!("--json-object={id}").into(), input.into()];
-    let out = crate::engines::run_ok(crate::engines::Tool::Qpdf, args, &[0, 3], &ctx.cancel)?;
-    let json: Value = serde_json::from_slice(&out.stdout)
-        .map_err(|_| OpError::OutputInvalid("JSON do qpdf em formato inesperado".into()))?;
-    Ok(json["qpdf"][1][format!("obj:{id}")]["value"].as_object().cloned())
+/// Aplica a atualização JSON `update` a `input`, gravando em `out`.
+fn apply_update(input: &Path, update: &Value, job: &JobDir, out: &Path, ctx: &JobCtx) -> OpResult<()> {
+    let json_path = job.file("atualizacao.json");
+    let bytes = serde_json::to_vec(update)
+        .map_err(|e| OpError::OutputInvalid(format!("não foi possível montar a atualização: {e}")))?;
+    std::fs::write(&json_path, bytes).map_err(|e| OpError::io("gravar arquivo temporário", e))?;
+    qpdf::update_from_json(input, &json_path, out, &ctx.cancel)
 }
 
 pub fn metadata(input: &Path, change: &MetadataChange, dest: &Destination, ctx: &JobCtx) -> OpResult<Outcome> {
@@ -281,7 +274,7 @@ pub fn metadata(input: &Path, change: &MetadataChange, dest: &Destination, ctx: 
         return Err(OpError::InvalidRange(format!(
             "“{}” tem restrições definidas pelo autor. Remova-as antes com “Remover senha”, usando a senha de \
              permissões.",
-            crate::error::display_name(input)
+            crate::human::file_name(input)
         )));
     }
     let job = JobDir::new()?;
@@ -295,10 +288,7 @@ pub fn metadata(input: &Path, change: &MetadataChange, dest: &Destination, ctx: 
             // O --remove-info do qpdf mantém a data de modificação; sem o
             // dicionário de informações no trailer, não sobra nada.
             let (trailer, max) = qpdf::trailer(&stripped, &ctx.cancel)?;
-            let json_path = job.file("sem-info.json");
-            std::fs::write(&json_path, serde_json::to_vec(&trailer_without_info(&trailer, max)).unwrap_or_default())
-                .map_err(|e| OpError::io("gravar arquivo temporário", e))?;
-            qpdf::update_from_json(&stripped, &json_path, &tmp, &ctx.cancel)?;
+            apply_update(&stripped, &trailer_without_info(&trailer, max), &job, &tmp, ctx)?;
             let left = poppler::doc_info(&tmp, &ctx.cancel)?;
             if left != poppler::DocInfo::default() {
                 return Err(OpError::OutputInvalid("ainda restaram metadados no arquivo".into()));
@@ -309,15 +299,12 @@ pub fn metadata(input: &Path, change: &MetadataChange, dest: &Destination, ctx: 
             ctx.report(0.2, "Lendo metadados");
             let (trailer, max) = qpdf::trailer(input, &ctx.cancel)?;
             let current = match trailer.get("/Info").and_then(Value::as_str) {
-                Some(id) => object_value(input, id, ctx)?,
+                Some(id) => qpdf::dictionary(input, id, &ctx.cancel)?,
                 None => None,
             };
             let update = info_update(&trailer, max, current.as_ref(), fields, &pdf_date_now());
-            let json_path = job.file("metadados.json");
-            std::fs::write(&json_path, serde_json::to_vec(&update).unwrap_or_default())
-                .map_err(|e| OpError::io("gravar arquivo temporário", e))?;
             ctx.report(0.5, "Gravando metadados");
-            qpdf::update_from_json(input, &json_path, &tmp, &ctx.cancel)?;
+            apply_update(input, &update, &job, &tmp, ctx)?;
             let got = poppler::doc_info(&tmp, &ctx.cancel)?;
             if got.title != fields.title.trim() || got.author != fields.author.trim() {
                 return Err(OpError::OutputInvalid("os metadados gravados não conferem com os informados".into()));

@@ -1,5 +1,25 @@
 # Changelog
 
+## Não lançado
+
+### Alterado
+- **Organização interna do código**, sem mudança de comportamento: a página
+  de ferramenta, o Anotar e o gerador de PDF foram divididos em módulos por
+  responsabilidade; Organizar e Anotar passaram a compartilhar cabeçalho,
+  telas, desfazer e gravação (`ui/editor.rs`); OCR e PDF para imagens usam o
+  mesmo laço paralelo; utilitários de texto ficaram em `human.rs`. Saída dos
+  PDFs gerados conferida byte a byte com a 0.5.0.
+- Ao salvar no Anotar, um erro técnico agora mostra “Detalhes técnicos”, como
+  já acontecia no Organizar.
+
+### Corrigido
+- O tema escolhido no menu voltava ao anterior assim que outra configuração
+  era gravada (por exemplo, ao abrir uma ferramenta).
+- Anotar: marcas feitas enquanto o arquivo era salvo ficavam marcadas como
+  salvas, e sair da tela não pedia confirmação.
+- Metadados: ao trocar de arquivo enquanto os metadados do anterior ainda
+  eram lidos, os campos podiam ser preenchidos com os dados do arquivo errado.
+
 ## 0.5.0 — 2026-10-14
 
 ### Adicionado

@@ -6,15 +6,14 @@
 //! novo: o arquivo cresce poucos KB por página.
 
 use std::path::{Path, PathBuf};
-use std::sync::Mutex;
-use std::sync::atomic::{AtomicUsize, Ordering};
 
 use image::GrayImage;
 
-use super::{Destination, Outcome, batch, output_name, verify_pdf};
+use super::{Destination, Outcome, batch, batch_output_name, parallel_map, verify_pdf};
 use crate::deskew;
 use crate::engines::{install_line, poppler, qpdf, tesseract};
-use crate::error::{OpError, OpResult, display_name};
+use crate::error::{OpError, OpResult};
+use crate::human;
 use crate::jobs::JobCtx;
 use crate::pdfwriter::{self, InvisiblePage, InvisibleWord};
 use crate::storage::{self, JobDir, stem};
@@ -125,10 +124,6 @@ fn targets(texts: &[String], skip_text_pages: bool) -> Vec<u32> {
     texts.iter().enumerate().filter(|(_, t)| !(skip_text_pages && has_text(t))).map(|(i, _)| i as u32 + 1).collect()
 }
 
-fn plural(n: usize, one: &str, many: &str) -> String {
-    format!("{n} {}", if n == 1 { one } else { many })
-}
-
 /// Idiomas conferidos e a fonte da camada de texto, prontos para o OCR.
 pub(super) struct Engine {
     langs: String,
@@ -187,7 +182,7 @@ pub(super) fn searchable(
     if pages.is_empty() {
         return Ok(None);
     }
-    let reads = recognize(input, &pages, &sizes, &engine.langs, job, ctx, i, n)?;
+    let reads = recognize(input, &pages, &sizes, &engine.langs, job, ctx, (i, n))?;
     let tilted: Vec<f32> = reads.iter().filter_map(|r| r.skew).collect();
     let layers: Vec<InvisiblePage> = reads.into_iter().map(|r| r.layer).collect();
 
@@ -221,7 +216,7 @@ pub(super) fn searchable(
         return Err(OpError::OutputInvalid(format!(
             "nenhum texto foi reconhecido em “{}”. Confira se o idioma escolhido é o do documento e se a \
              digitalização está legível",
-            display_name(input)
+            human::file_name(input)
         )));
     }
     Ok(Some(Searchable {
@@ -238,9 +233,9 @@ pub(super) fn searchable(
 pub(super) fn summary(input: &Path, s: &Searchable, skip_text_pages: bool) -> String {
     let mut note = format!(
         "“{}”: texto reconhecido em {} de {}.",
-        display_name(input),
+        human::file_name(input),
         s.recognized,
-        plural(s.analyzed, "página analisada", "páginas analisadas")
+        human::plural(s.analyzed, "página analisada", "páginas analisadas")
     );
     if s.turned > 0 {
         note.push_str(&if s.turned == 1 {
@@ -251,7 +246,7 @@ pub(super) fn summary(input: &Path, s: &Searchable, skip_text_pages: bool) -> St
     }
     if !s.tilted.is_empty() {
         let max = s.tilted.iter().fold(0.0f32, |m, a| m.max(a.abs()));
-        let angle = format!("{max:.1}").replace('.', ",");
+        let angle = human::decimal(f64::from(max), 1);
         note.push_str(&if s.tilted.len() == 1 {
             format!(" 1 página estava torta ({angle}°) e foi lida numa cópia endireitada.")
         } else {
@@ -280,12 +275,12 @@ pub fn ocr(inputs: &[PathBuf], opts: OcrOptions, dest: &Destination, ctx: &JobCt
             outcome.notes.push(format!(
                 "“{}” já tem texto selecionável em todas as páginas; não havia o que reconhecer e nenhum arquivo \
                  foi criado.",
-                display_name(input)
+                human::file_name(input)
             ));
             return Ok(());
         };
         let base = format!("{} - OCR", stem(input));
-        let name = if n == 1 { output_name(dest, &base, "pdf") } else { storage::sanitize_file_name(&base, "pdf") };
+        let name = batch_output_name(dest, n, &base, "pdf");
         outcome.push(storage::commit(&done.pdf, &dest.dir, &name)?);
         outcome.notes.push(summary(input, &done, opts.skip_text_pages));
         Ok(())
@@ -462,9 +457,11 @@ fn read_page(image: &Path, page: u32, langs: &str, dpi: u32, job: &JobDir, ctx: 
     Ok(PageRead { layer, skew: best.skew })
 }
 
-/// Reconhece as páginas em paralelo (um processo do Tesseract por página).
-/// Devolve as páginas da camada na ordem de `pages`.
-#[allow(clippy::too_many_arguments)]
+/// Até quantos Tesseract rodam ao mesmo tempo (um processo por página).
+const MAX_WORKERS: usize = 4;
+
+/// Reconhece as páginas em paralelo. Devolve as leituras na ordem de
+/// `pages`. `(file_index, file_count)` situa o arquivo no lote (progresso).
 fn recognize(
     input: &Path,
     pages: &[u32],
@@ -472,64 +469,30 @@ fn recognize(
     langs: &str,
     job: &JobDir,
     ctx: &JobCtx,
-    file_index: usize,
-    file_count: usize,
+    (file_index, file_count): (usize, usize),
 ) -> OpResult<Vec<PageRead>> {
-    const MAX_WORKERS: usize = 4;
     let workers = std::thread::available_parallelism().map_or(1, |n| n.get().saturating_sub(1)).clamp(1, MAX_WORKERS);
-    let next = AtomicUsize::new(0);
-    let done = AtomicUsize::new(0);
-    let layers: Mutex<Vec<Option<PageRead>>> = Mutex::new(vec![None; pages.len()]);
-    let first_error: Mutex<Option<OpError>> = Mutex::new(None);
     let count = pages.len();
-    ctx.report(
-        file_index as f64 / file_count as f64,
-        &format!("{}: reconhecendo 0 de {}", stem(input), plural(count, "página", "páginas")),
-    );
-    std::thread::scope(|scope| {
-        for _ in 0..workers.min(count) {
-            scope.spawn(|| {
-                loop {
-                    if ctx.cancel.is_cancelled() || first_error.lock().unwrap().is_some() {
-                        break;
-                    }
-                    let k = next.fetch_add(1, Ordering::SeqCst);
-                    let Some(&page) = pages.get(k) else { break };
-                    let dpi = dpi_for(sizes[page as usize - 1]);
-                    let result = poppler::render_gray(input, page, dpi, &job.file(&format!("p{page}")), &ctx.cancel)
-                        .and_then(|image| {
-                            let result = read_page(&image, page, langs, dpi, job, ctx);
-                            let _ = std::fs::remove_file(&image);
-                            result
-                        });
-                    match result {
-                        Ok(layer) => {
-                            layers.lock().unwrap()[k] = Some(layer);
-                            let d = done.fetch_add(1, Ordering::SeqCst) + 1;
-                            ctx.report(
-                                (file_index as f64 + 0.95 * d as f64 / count as f64) / file_count as f64,
-                                &format!("{}: reconhecendo {d} de {}", stem(input), plural(count, "página", "páginas")),
-                            );
-                        }
-                        Err(e) => {
-                            first_error.lock().unwrap().get_or_insert(e);
-                            break;
-                        }
-                    }
-                }
-            });
-        }
-    });
-    ctx.cancel.check()?;
-    if let Some(e) = first_error.into_inner().unwrap() {
-        return Err(e);
-    }
-    layers
-        .into_inner()
-        .unwrap()
-        .into_iter()
-        .collect::<Option<Vec<_>>>()
-        .ok_or_else(|| OpError::OutputInvalid("faltou a camada de texto de alguma página".into()))
+    let report = |done: usize| {
+        ctx.report(
+            (file_index as f64 + 0.95 * done as f64 / count as f64) / file_count as f64,
+            &format!("{}: reconhecendo {done} de {}", stem(input), human::plural(count, "página", "páginas")),
+        );
+    };
+    report(0);
+    parallel_map(
+        pages,
+        workers,
+        &ctx.cancel,
+        |&page| {
+            let dpi = dpi_for(sizes[page as usize - 1]);
+            let image = poppler::render_gray(input, page, dpi, &job.file(&format!("p{page}")), &ctx.cancel)?;
+            let result = read_page(&image, page, langs, dpi, job, ctx);
+            let _ = std::fs::remove_file(&image);
+            result
+        },
+        report,
+    )
 }
 
 #[cfg(test)]

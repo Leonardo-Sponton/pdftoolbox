@@ -2,7 +2,7 @@
 
 use std::path::{Path, PathBuf};
 
-use super::{Destination, Outcome, SplitMode, batch, output_name, verify_pdf};
+use super::{Destination, Outcome, SplitMode, batch, batch_output_name, output_name, verify_pdf};
 use crate::engines::{poppler, qpdf};
 use crate::error::{OpError, OpResult};
 use crate::jobs::JobCtx;
@@ -44,7 +44,7 @@ pub fn blank_sizes(items: &[PageItem], sizes: &[(f32, f32)]) -> Vec<(f32, f32)> 
         .map(|(i, _)| {
             let before = items[..i].iter().rev().find(|it| !it.is_blank());
             let after = items[i + 1..].iter().find(|it| !it.is_blank());
-            before.or(after).map(shown).unwrap_or(crate::pdfwriter::A4_POINTS)
+            before.or(after).map_or(crate::pdfwriter::A4_POINTS, shown)
         })
         .collect()
 }
@@ -180,11 +180,7 @@ pub fn rotate(
         let tmp = job.file("girado.pdf");
         qpdf::rotate(input, &[(angle, pages)], &tmp, &ctx.cancel)?;
         verify_pdf(&tmp, total, ctx)?;
-        let name = if n == 1 {
-            output_name(dest, &format!("{} - girado", stem(input)), "pdf")
-        } else {
-            storage::sanitize_file_name(&format!("{} - girado", stem(input)), "pdf")
-        };
+        let name = batch_output_name(dest, n, &format!("{} - girado", stem(input)), "pdf");
         outcome.push(storage::commit(&tmp, &dest.dir, &name)?);
         Ok(())
     })

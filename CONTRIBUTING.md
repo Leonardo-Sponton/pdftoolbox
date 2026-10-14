@@ -30,6 +30,19 @@ pessoais. Os testes conferem o **conteúdo** (texto de cada página via
 `pdftotext`, rotação e tamanho via `pdfinfo`, pixels renderizados), não apenas
 a ausência de erro.
 
+## Convenções de código
+
+- `rustfmt.toml` define linhas de até 120 colunas; `clippy` sem avisos.
+- Nada de `unwrap()`/`expect()` para contornar erros: as operações devolvem
+  `OpResult`, e a interface mostra o erro. Os poucos `expect` que restam
+  afirmam invariantes (catálogo completo, recursos embutidos, pipes pedidos).
+- Textos para o usuário passam por `pdftoolbox::human` (nomes de arquivo,
+  tamanhos, plurais, vírgula decimal).
+- Na interface, sinais usam `glib::clone!(#[weak] …)`; código que espera
+  (`async`) guarda um `Weak` e só o reabre depois do `await`.
+- Lógica sem GTK (textos, escolhas, cálculos) fica em funções puras, com
+  testes de unidade no mesmo arquivo.
+
 ## Ferramentas de desenvolvimento
 
 - `cargo run --example amostras -- <pasta>` gera PDFs de exemplo.

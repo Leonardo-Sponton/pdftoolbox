@@ -1,10 +1,8 @@
 //! Imagens → PDF (gerador próprio) e PDF → imagens (Poppler).
 
 use std::path::{Path, PathBuf};
-use std::sync::Mutex;
-use std::sync::atomic::{AtomicU32, Ordering};
 
-use super::{Destination, Outcome, batch, output_name, verify_pdf};
+use super::{Destination, Outcome, batch, batch_output_name, output_name, parallel_map, verify_pdf};
 use crate::engines::poppler::{self, ImageFormat};
 use crate::engines::qpdf;
 use crate::error::{OpError, OpResult};
@@ -58,6 +56,9 @@ pub fn images_to_pdf(
     })
 }
 
+/// Até quantos `pdftoppm` rodam ao mesmo tempo (cada um usa um núcleo).
+const MAX_RENDERERS: usize = 4;
+
 pub fn pdf_to_images(
     inputs: &[PathBuf],
     format: ImageFormat,
@@ -68,11 +69,25 @@ pub fn pdf_to_images(
 ) -> OpResult<Outcome> {
     let dpi = dpi.clamp(36, 1200);
     let n = inputs.len() as f64;
+    let workers = std::thread::available_parallelism().map_or(1, |c| (c.get() / 2).max(1)).min(MAX_RENDERERS);
     batch(inputs, |i, input, outcome| {
         let total = qpdf::page_count(input, &ctx.cancel)?;
         let job = JobDir::new()?;
         let digits = total.to_string().len();
-        let rendered = render_pages(input, total, digits, format, dpi, quality, &job, ctx, i, n)?;
+        let pages: Vec<u32> = (1..=total).collect();
+        let rendered = parallel_map(
+            &pages,
+            workers,
+            &ctx.cancel,
+            |&page| {
+                let base = job.file(&format!("p{page:0digits$}"));
+                poppler::render_page(input, page, format, dpi, quality, &base, &ctx.cancel)
+            },
+            |done| {
+                let fraction = (i as f64 + done as f64 / total as f64) / n;
+                ctx.report(fraction, &format!("{}: {done} de {total} páginas", stem(input)));
+            },
+        )?;
         let dir = if total > 1 {
             let folder = storage::create_unique_dir(
                 &dest.dir,
@@ -85,7 +100,7 @@ pub fn pdf_to_images(
         } else {
             dest.dir.clone()
         };
-        for (page, file) in rendered {
+        for (page, file) in pages.into_iter().zip(rendered) {
             let name = format!("{} - página {page:0digits$}.{}", stem(input), format.extension());
             outcome.push(storage::commit(&file, &dir, &storage::sanitize_file_name(&name, format.extension()))?);
         }
@@ -93,67 +108,6 @@ pub fn pdf_to_images(
     })
 }
 
-/// Renderiza todas as páginas com até `MAX_RENDERERS` processos simultâneos
-/// (o pdftoppm usa um núcleo por processo). Devolve (página, arquivo) em ordem.
-#[allow(clippy::too_many_arguments)]
-fn render_pages(
-    input: &Path,
-    total: u32,
-    digits: usize,
-    format: ImageFormat,
-    dpi: u32,
-    quality: u8,
-    job: &JobDir,
-    ctx: &JobCtx,
-    file_index: usize,
-    file_count: f64,
-) -> OpResult<Vec<(u32, PathBuf)>> {
-    const MAX_RENDERERS: usize = 4;
-    let workers = std::thread::available_parallelism().map_or(1, |n| (n.get() / 2).max(1)).min(MAX_RENDERERS);
-    let next = AtomicU32::new(1);
-    let done = AtomicU32::new(0);
-    let results: Mutex<Vec<(u32, PathBuf)>> = Mutex::new(Vec::with_capacity(total as usize));
-    let first_error: Mutex<Option<OpError>> = Mutex::new(None);
-    std::thread::scope(|scope| {
-        for _ in 0..workers.min(total as usize) {
-            scope.spawn(|| {
-                loop {
-                    if ctx.cancel.is_cancelled() || first_error.lock().unwrap().is_some() {
-                        break;
-                    }
-                    let page = next.fetch_add(1, Ordering::SeqCst);
-                    if page > total {
-                        break;
-                    }
-                    let base = job.file(&format!("p{page:0digits$}"));
-                    match poppler::render_page(input, page, format, dpi, quality, &base, &ctx.cancel) {
-                        Ok(file) => {
-                            results.lock().unwrap().push((page, file));
-                            let d = done.fetch_add(1, Ordering::SeqCst) + 1;
-                            ctx.report(
-                                (file_index as f64 + d as f64 / total as f64) / file_count,
-                                &format!("{}: {d} de {total} páginas", stem(input)),
-                            );
-                        }
-                        Err(e) => {
-                            first_error.lock().unwrap().get_or_insert(e);
-                            break;
-                        }
-                    }
-                }
-            });
-        }
-    });
-    ctx.cancel.check()?;
-    if let Some(e) = first_error.into_inner().unwrap() {
-        return Err(e);
-    }
-    let mut results = results.into_inner().unwrap();
-    results.sort_by_key(|(p, _)| *p);
-    Ok(results)
-}
-
-/// Extrai o texto de cada PDF para um `.txt` (UTF-8) ao lado.
 /// Extrai o texto selecionável de cada PDF. Com `ocr`, as páginas sem texto
 /// (digitalizadas) são reconhecidas antes, numa cópia temporária com a
 /// camada de texto — só o .txt é gravado.
@@ -189,15 +143,11 @@ pub fn extract_text(
             outcome.notes.push(format!(
                 "“{}” não tem texto selecionável — provavelmente é uma digitalização (imagem). \
                  Nenhum arquivo foi criado; ligue “Reconhecer texto das páginas digitalizadas (OCR)”.",
-                crate::error::display_name(input)
+                crate::human::file_name(input)
             ));
             return Ok(());
         }
-        let name = if n == 1 {
-            output_name(dest, &stem(input), "txt")
-        } else {
-            storage::sanitize_file_name(&stem(input), "txt")
-        };
+        let name = batch_output_name(dest, n, &stem(input), "txt");
         outcome.push(storage::commit(&tmp, &dest.dir, &name)?);
         Ok(())
     })?;
@@ -242,11 +192,7 @@ pub fn office_to_pdf(inputs: &[PathBuf], dest: &Destination, ctx: &JobCtx) -> Op
         if pages == 0 {
             return Err(OpError::OutputInvalid("o PDF gerado não tem páginas".into()));
         }
-        let name = if n == 1 {
-            output_name(dest, &stem(input), "pdf")
-        } else {
-            storage::sanitize_file_name(&stem(input), "pdf")
-        };
+        let name = batch_output_name(dest, n, &stem(input), "pdf");
         outcome.push(storage::commit(&pdf, &dest.dir, &name)?);
         Ok(())
     })?;

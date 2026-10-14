@@ -1,15 +1,38 @@
 //! Pequenos utilitários de interface compartilhados.
 
 use std::path::{Path, PathBuf};
+use std::rc::Rc;
 
 use adw::prelude::*;
 use gtk::{gdk, gio, glib};
 
 use pdftoolbox::catalog::{self, Accepts};
 
-/// Executa `f` em uma thread do pool do GIO sem bloquear a interface.
+/// Executa `f` em uma thread do pool do GIO sem bloquear a interface. Um
+/// pânico em `f` continua na thread da interface, como se `f` rodasse nela.
 pub async fn blocking<T: Send + 'static>(f: impl FnOnce() -> T + Send + 'static) -> T {
-    gio::spawn_blocking(f).await.expect("tarefa em segundo plano entrou em pânico")
+    gio::spawn_blocking(f).await.unwrap_or_else(|panic| std::panic::resume_unwind(panic))
+}
+
+/// Controlador de atalhos que ativam ações: `("<Control>s", "page.run")`.
+pub fn shortcuts(bindings: &[(&str, &str)]) -> gtk::ShortcutController {
+    let controller = gtk::ShortcutController::new();
+    for (accel, action) in bindings {
+        controller.add_shortcut(gtk::Shortcut::new(
+            gtk::ShortcutTrigger::parse_string(accel),
+            Some(gtk::NamedAction::new(action)),
+        ));
+    }
+    controller
+}
+
+/// Mantém `state` vivo enquanto `widget` existir. As páginas não são
+/// subclasses GObject: o estado delas é um `Rc` preso ao widget, e os
+/// sinais guardam só referências fracas a ele.
+pub fn keep_alive<T: 'static>(widget: &impl IsA<gtk::Widget>, state: Rc<T>) {
+    widget.connect_destroy(move |_| {
+        let _ = &state;
+    });
 }
 
 fn filter_for(accepts: Accepts) -> gtk::FileFilter {

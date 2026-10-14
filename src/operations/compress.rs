@@ -2,9 +2,10 @@
 
 use std::path::{Path, PathBuf};
 
-use super::{Destination, Outcome, batch, human_size, output_name, verify_pdf};
+use super::{Destination, Outcome, batch, batch_output_name, verify_pdf};
 use crate::engines::{Tool, ghostscript, qpdf};
 use crate::error::{OpError, OpResult};
+use crate::human;
 use crate::jobs::{CancelToken, JobCtx};
 use crate::storage::{self, JobDir, stem};
 
@@ -40,6 +41,10 @@ impl CompressLevel {
             CompressLevel::Custom(dpi) => Some(("ebook", dpi.clamp(*CUSTOM_DPI.start(), *CUSTOM_DPI.end()))),
         }
     }
+}
+
+fn file_size(path: &Path) -> OpResult<u64> {
+    Ok(std::fs::metadata(path).map_err(|e| OpError::io_path("ler", path, e))?.len())
 }
 
 /// Aplica `level` a `input`, gravando em `out` (dentro de `job`).
@@ -97,14 +102,14 @@ pub fn estimate(input: &Path, level: CompressLevel, cancel: &CancelToken) -> OpR
     for tool in level.needs() {
         tool.require()?;
     }
-    let original = std::fs::metadata(input).map_err(|e| OpError::io_path("ler", input, e))?.len();
+    let original = file_size(input)?;
     let total = qpdf::page_count(input, cancel)?;
     let job = JobDir::new()?;
     let result = job.file("estimativa.pdf");
     let pages = sample_pages(total);
     if pages.len() as u32 == total {
         compress_file(input, level, &job, &result, cancel)?;
-        let size = std::fs::metadata(&result).map_err(|e| OpError::io("ler o resultado", e))?.len();
+        let size = file_size(&result)?;
         return Ok(Estimate { original, estimated: size, exact: true });
     }
     // A amostra é extraída sem perda e otimizada do mesmo jeito, para que a
@@ -115,8 +120,8 @@ pub fn estimate(input: &Path, level: CompressLevel, cancel: &CancelToken) -> OpR
     let sample = job.file("amostra.pdf");
     qpdf::optimize_lossless(&extracted, &sample, cancel)?;
     compress_file(&sample, level, &job, &result, cancel)?;
-    let before = std::fs::metadata(&sample).map_err(|e| OpError::io("ler a amostra", e))?.len();
-    let after = std::fs::metadata(&result).map_err(|e| OpError::io("ler o resultado", e))?.len();
+    let before = file_size(&sample)?;
+    let after = file_size(&result)?;
     let ratio = after as f64 / before.max(1) as f64;
     let estimated = ((original as f64 * ratio).round() as u64).max(1);
     Ok(Estimate { original, estimated, exact: false })
@@ -134,33 +139,32 @@ pub fn compress(inputs: &[PathBuf], level: CompressLevel, dest: &Destination, ct
         let base = i as f64 / n as f64;
         ctx.report(base, &format!("Analisando {}", stem(input)));
         let pages = qpdf::page_count(input, &ctx.cancel)?;
-        let original = std::fs::metadata(input).map_err(|e| OpError::io_path("ler", input, e))?.len();
+        let original = file_size(input)?;
         let job = JobDir::new()?;
         let result = job.file("comprimido.pdf");
         let step = if level == CompressLevel::Lossless { "Otimizando" } else { "Recomprimindo imagens de" };
         ctx.report(base + 0.1 / n as f64, &format!("{step} {}", stem(input)));
         compress_file(input, level, &job, &result, &ctx.cancel)?;
         verify_pdf(&result, pages, ctx)?;
-        let size = std::fs::metadata(&result).map_err(|e| OpError::io("ler o resultado", e))?.len();
+        let size = file_size(&result)?;
         let saving = 1.0 - size as f64 / original.max(1) as f64;
         if saving < MIN_SAVING {
             outcome.notes.push(format!(
                 "“{}” já está otimizado: o resultado teria {} (original: {}). Nenhum arquivo novo foi criado.",
                 stem(input),
-                human_size(size),
-                human_size(original)
+                human::size(size),
+                human::size(original)
             ));
             return Ok(());
         }
         let suggested = format!("{} - comprimido", stem(input));
-        let name =
-            if n == 1 { output_name(dest, &suggested, "pdf") } else { storage::sanitize_file_name(&suggested, "pdf") };
+        let name = batch_output_name(dest, n, &suggested, "pdf");
         outcome.push(storage::commit(&result, &dest.dir, &name)?);
         outcome.notes.push(format!(
             "“{}”: {} → {} (−{:.0}%).",
             stem(input),
-            human_size(original),
-            human_size(size),
+            human::size(original),
+            human::size(size),
             saving * 100.0
         ));
         Ok(())

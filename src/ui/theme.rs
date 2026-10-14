@@ -7,72 +7,72 @@
 //! tempo de execução e recarregamos quando o modo claro/escuro muda.
 
 pub struct Palette {
-    pub fundo: &'static str,
-    pub fundo_escuro: &'static str,
-    pub fundo_header: &'static str,
-    pub texto: &'static str,
-    pub texto_forte: &'static str,
-    pub fraco: &'static str,
-    pub acento: &'static str,
-    pub acento_hover: &'static str,
-    pub acento_fg: &'static str,
-    pub borda: &'static str,
-    pub borda_botao: &'static str,
-    pub botao_ativo: &'static str,
+    pub background: &'static str,
+    pub background_dark: &'static str,
+    pub background_header: &'static str,
+    pub text: &'static str,
+    pub text_strong: &'static str,
+    pub dim: &'static str,
+    pub accent: &'static str,
+    pub accent_hover: &'static str,
+    pub accent_fg: &'static str,
+    pub border: &'static str,
+    pub button_border: &'static str,
+    pub button_checked: &'static str,
     pub h1: &'static str,
     pub h2: &'static str,
     pub h3: &'static str,
     pub ok: &'static str,
-    pub erro: &'static str,
-    pub pagina: &'static str,
+    pub error: &'static str,
+    pub page: &'static str,
     /// Cores dos arquivos gerados (dividir), na ordem roxo, ciano, laranja…
-    pub grupos: [&'static str; 8],
+    pub groups: [&'static str; 8],
 }
 
 /// Paleta do MyNotes (Obsidian Retroma, esquema escuro).
-pub const ESCURO: Palette = Palette {
-    fundo: "#010a29",
-    fundo_escuro: "#000623",
-    fundo_header: "#050017",
-    texto: "#afa7d4",
-    texto_forte: "#d4ccf5",
-    fraco: "#8a83b0",
-    acento: "#a67cff",
-    acento_hover: "#b994ff",
-    acento_fg: "#050017",
-    borda: "#6452a0",
-    borda_botao: "#4e5271",
-    botao_ativo: "#280072",
+pub const DARK: Palette = Palette {
+    background: "#010a29",
+    background_dark: "#000623",
+    background_header: "#050017",
+    text: "#afa7d4",
+    text_strong: "#d4ccf5",
+    dim: "#8a83b0",
+    accent: "#a67cff",
+    accent_hover: "#b994ff",
+    accent_fg: "#050017",
+    border: "#6452a0",
+    button_border: "#4e5271",
+    button_checked: "#280072",
     h1: "#e6958c",
     h2: "#daa069",
     h3: "#e0c07a",
     ok: "#8fd3a0",
-    erro: "#f0857a",
-    pagina: "#f4f2fb",
-    grupos: ["#a67cff", "#7fd1d8", "#daa069", "#8fd3a0", "#f08fc0", "#6fa8ff", "#e0c07a", "#e6958c"],
+    error: "#f0857a",
+    page: "#f4f2fb",
+    groups: ["#a67cff", "#7fd1d8", "#daa069", "#8fd3a0", "#f08fc0", "#6fa8ff", "#e0c07a", "#e6958c"],
 };
 
 /// Variante clara com os mesmos matizes (contraste ≥ 4,5:1 para texto).
-pub const CLARO: Palette = Palette {
-    fundo: "#fdfcff",
-    fundo_escuro: "#f3f1fb",
-    fundo_header: "#e9e5f7",
-    texto: "#2b2652",
-    texto_forte: "#17133a",
-    fraco: "#5d5785",
-    acento: "#6a3dd8",
-    acento_hover: "#7b52e6",
-    acento_fg: "#ffffff",
-    borda: "#b3a8dc",
-    borda_botao: "#c4bde0",
-    botao_ativo: "#e2d8ff",
+pub const LIGHT: Palette = Palette {
+    background: "#fdfcff",
+    background_dark: "#f3f1fb",
+    background_header: "#e9e5f7",
+    text: "#2b2652",
+    text_strong: "#17133a",
+    dim: "#5d5785",
+    accent: "#6a3dd8",
+    accent_hover: "#7b52e6",
+    accent_fg: "#ffffff",
+    border: "#b3a8dc",
+    button_border: "#c4bde0",
+    button_checked: "#e2d8ff",
     h1: "#b5483d",
     h2: "#96570f",
     h3: "#8a6d12",
     ok: "#1f7a47",
-    erro: "#c0392b",
-    pagina: "#ffffff",
-    grupos: ["#6a3dd8", "#11798a", "#a85d10", "#1f7a47", "#b0306f", "#2d62c4", "#8a6d12", "#b5483d"],
+    error: "#c0392b",
+    page: "#ffffff",
+    groups: ["#6a3dd8", "#11798a", "#a85d10", "#1f7a47", "#b0306f", "#2d62c4", "#8a6d12", "#b5483d"],
 };
 
 fn uses_variables() -> bool {
@@ -81,35 +81,35 @@ fn uses_variables() -> bool {
 
 fn base(c: &Palette) -> String {
     let pairs = [
-        ("window-bg-color", c.fundo_escuro),
-        ("window-fg-color", c.texto),
-        ("view-bg-color", c.fundo),
-        ("view-fg-color", c.texto),
-        ("headerbar-bg-color", c.fundo_header),
-        ("headerbar-fg-color", c.texto_forte),
-        ("headerbar-backdrop-color", c.fundo_escuro),
-        ("sidebar-bg-color", c.fundo_escuro),
-        ("sidebar-fg-color", c.texto),
-        ("popover-bg-color", c.fundo_header),
-        ("popover-fg-color", c.texto),
-        ("dialog-bg-color", c.fundo),
-        ("dialog-fg-color", c.texto),
-        ("card-bg-color", c.fundo_header),
-        ("card-fg-color", c.texto),
-        ("accent-bg-color", c.acento),
-        ("accent-color", c.acento),
-        ("accent-fg-color", c.acento_fg),
+        ("window-bg-color", c.background_dark),
+        ("window-fg-color", c.text),
+        ("view-bg-color", c.background),
+        ("view-fg-color", c.text),
+        ("headerbar-bg-color", c.background_header),
+        ("headerbar-fg-color", c.text_strong),
+        ("headerbar-backdrop-color", c.background_dark),
+        ("sidebar-bg-color", c.background_dark),
+        ("sidebar-fg-color", c.text),
+        ("popover-bg-color", c.background_header),
+        ("popover-fg-color", c.text),
+        ("dialog-bg-color", c.background),
+        ("dialog-fg-color", c.text),
+        ("card-bg-color", c.background_header),
+        ("card-fg-color", c.text),
+        ("accent-bg-color", c.accent),
+        ("accent-color", c.accent),
+        ("accent-fg-color", c.accent_fg),
         ("success-color", c.ok),
         ("warning-color", c.h3),
-        ("error-color", c.erro),
-        ("destructive-color", c.erro),
+        ("error-color", c.error),
+        ("destructive-color", c.error),
     ];
     if uses_variables() {
         let mut s = String::from(":root {\n");
         for (k, v) in pairs {
             s.push_str(&format!("  --{k}: {v};\n"));
         }
-        s.push_str(&format!("  --border-color: alpha({}, 0.55);\n  --dim-opacity: 0.8;\n}}\n", c.borda));
+        s.push_str(&format!("  --border-color: alpha({}, 0.55);\n  --dim-opacity: 0.8;\n}}\n", c.border));
         s
     } else {
         pairs.iter().map(|(k, v)| format!("@define-color {} {v};\n", k.replace('-', "_"))).collect()
@@ -204,36 +204,36 @@ button.tirar-arquivo:hover {{ color: {erro}; border-color: {erro}; background: {
 .folha-previa {{ background: {pagina}; border-radius: 2px; box-shadow: 0 1px 4px alpha(black, 0.4); }}
 .margem-previa {{ border: 1px dashed alpha({acento}, 0.6); }}
 "#,
-        fundo = c.fundo,
-        fundo_header = c.fundo_header,
-        texto_forte = c.texto_forte,
-        fraco = c.fraco,
-        acento = c.acento,
-        acento_hover = c.acento_hover,
-        acento_fg = c.acento_fg,
-        borda = c.borda,
-        borda_botao = c.borda_botao,
-        botao_ativo = c.botao_ativo,
+        fundo = c.background,
+        fundo_header = c.background_header,
+        texto_forte = c.text_strong,
+        fraco = c.dim,
+        acento = c.accent,
+        acento_hover = c.accent_hover,
+        acento_fg = c.accent_fg,
+        borda = c.border,
+        borda_botao = c.button_border,
+        botao_ativo = c.button_checked,
         h1 = c.h1,
         h2 = c.h2,
         h3 = c.h3,
         ok = c.ok,
-        erro = c.erro,
-        pagina = c.pagina,
+        erro = c.error,
+        pagina = c.page,
     ));
-    for (i, color) in c.grupos.iter().enumerate() {
+    for (i, color) in c.groups.iter().enumerate() {
         s.push_str(&format!(
             ".pv-grupo-{i} {{ border-color: {color}; background: alpha({color}, 0.12); }}\n\
              .pv-grupo-{i} .pv-selo {{ background: {color}; color: {}; }}\n\
              .pv-grupo-{i} .pv-numero {{ color: {color}; font-weight: bold; }}\n",
-            c.acento_fg
+            c.accent_fg
         ));
     }
     s
 }
 
 pub fn current() -> &'static Palette {
-    if adw::StyleManager::default().is_dark() { &ESCURO } else { &CLARO }
+    if adw::StyleManager::default().is_dark() { &DARK } else { &LIGHT }
 }
 
 /// Instala a paleta e a mantém sincronizada com o modo claro/escuro.

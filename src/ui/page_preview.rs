@@ -8,7 +8,7 @@ use std::rc::{Rc, Weak};
 use adw::prelude::*;
 use gtk::glib;
 
-use pdftoolbox::error::display_name;
+use pdftoolbox::human;
 use pdftoolbox::jobs::CancelToken;
 use pdftoolbox::operations::{ImageLayout, PageSize};
 use pdftoolbox::pdfwriter;
@@ -129,51 +129,58 @@ impl PagePreview {
             on_click: RefCell::new(None),
         });
         if clickable {
-            let p = Rc::downgrade(&preview);
-            flow.connect_child_activated(move |_, child| {
-                if let Some(p) = p.upgrade()
-                    && let Some(cb) = p.on_click.borrow().as_ref()
-                {
-                    cb(child.index() as u32 + 1);
+            flow.connect_child_activated(glib::clone!(
+                #[weak]
+                preview,
+                move |_, child| {
+                    if let Some(cb) = preview.on_click.borrow().as_ref() {
+                        cb(child.index() as u32 + 1);
+                    }
                 }
-            });
+            ));
         }
         // Ampliar: espaço (antes do FlowBox, que o usaria para ativar) e botão direito.
         let keys = gtk::EventControllerKey::new();
         keys.set_propagation_phase(gtk::PropagationPhase::Capture);
-        let p = Rc::downgrade(&preview);
-        keys.connect_key_pressed(move |_, key, _, mods| {
-            if key == gtk::gdk::Key::space
-                && mods.is_empty()
-                && let Some(p) = p.upgrade()
-                && let Some(child) = p.flow.focus_child().and_downcast::<gtk::FlowBoxChild>()
-            {
-                p.zoom(child.index() as usize);
-                return glib::Propagation::Stop;
+        keys.connect_key_pressed(glib::clone!(
+            #[weak]
+            preview,
+            #[upgrade_or]
+            glib::Propagation::Proceed,
+            move |_, key, _, mods| {
+                if key == gtk::gdk::Key::space
+                    && mods.is_empty()
+                    && let Some(child) = preview.flow.focus_child().and_downcast::<gtk::FlowBoxChild>()
+                {
+                    preview.zoom(child.index() as usize);
+                    return glib::Propagation::Stop;
+                }
+                glib::Propagation::Proceed
             }
-            glib::Propagation::Proceed
-        });
+        ));
         flow.add_controller(keys);
         let right = gtk::GestureClick::builder().button(gtk::gdk::BUTTON_SECONDARY).build();
-        let p = Rc::downgrade(&preview);
-        right.connect_pressed(move |g, _, x, y| {
-            if let Some(p) = p.upgrade()
-                && let Some(child) = p.flow.child_at_pos(x as i32, y as i32)
-            {
-                g.set_state(gtk::EventSequenceState::Claimed);
-                p.zoom(child.index() as usize);
+        right.connect_pressed(glib::clone!(
+            #[weak]
+            preview,
+            move |g, _, x, y| {
+                if let Some(child) = preview.flow.child_at_pos(x as i32, y as i32) {
+                    g.set_state(gtk::EventSequenceState::Claimed);
+                    preview.zoom(child.index() as usize);
+                }
             }
-        });
+        ));
         flow.add_controller(right);
-        let p = Rc::downgrade(&preview);
-        chooser.connect_selected_notify(move |d| {
-            if let Some(p) = p.upgrade()
-                && !p.updating.get()
-            {
-                let path = p.files.borrow().get(d.selected() as usize).cloned();
-                p.load(path);
+        chooser.connect_selected_notify(glib::clone!(
+            #[weak]
+            preview,
+            move |d| {
+                if !preview.updating.get() {
+                    let path = preview.files.borrow().get(d.selected() as usize).cloned();
+                    preview.load(path);
+                }
             }
-        });
+        ));
         preview.load(None);
         preview
     }
@@ -219,7 +226,7 @@ impl PagePreview {
     /// Arquivos disponíveis; mantém o arquivo mostrado se ele continuar na lista.
     pub fn set_files(self: &Rc<Self>, files: &[PathBuf]) {
         *self.files.borrow_mut() = files.to_vec();
-        let names: Vec<String> = files.iter().map(|f| display_name(f)).collect();
+        let names: Vec<String> = files.iter().map(|f| human::file_name(f)).collect();
         let refs: Vec<&str> = names.iter().map(String::as_str).collect();
         let current = self.path.borrow().clone();
         let index = current.and_then(|c| files.iter().position(|f| *f == c)).unwrap_or(0);
@@ -314,8 +321,8 @@ impl PagePreview {
     /// Ajusta a quantidade de células, reaproveitando as existentes.
     fn set_cells(&self, n: u32) {
         let mut cells = self.cells.borrow_mut();
-        while cells.len() > n as usize {
-            let cell = cells.pop().unwrap();
+        let keep = (n as usize).min(cells.len());
+        for cell in cells.drain(keep..).rev() {
             self.flow.remove(&cell.child);
         }
         for cell in cells.iter() {
@@ -541,7 +548,7 @@ fn sheet(n: usize, path: &Path, dims: Option<(f32, f32)>, layout: ImageLayout) -
     let b = gtk::Box::new(gtk::Orientation::Vertical, 6);
     b.append(&holder);
     b.append(&caption);
-    b.set_tooltip_text(Some(&display_name(path)));
+    b.set_tooltip_text(Some(&human::file_name(path)));
     let child = gtk::FlowBoxChild::new();
     child.set_child(Some(&b));
     child.set_focusable(false);
@@ -560,7 +567,8 @@ pub struct StampPreview {
     timer: RefCell<Option<glib::SourceId>>,
 }
 
-type LayerFn = Box<dyn FnOnce((f32, f32)) -> pdfwriter::OverlayPage + Send>;
+/// Camada de carimbo de uma página, a partir do tamanho exibido dela.
+pub type LayerFn = Box<dyn FnOnce((f32, f32)) -> pdfwriter::OverlayPage + Send>;
 
 impl StampPreview {
     pub fn new() -> Rc<StampPreview> {
@@ -682,7 +690,7 @@ impl TextPreview {
         self.group.set_visible(true);
         self.group.set_description(Some(&glib::markup_escape_text(&format!(
             "Como o texto de “{}” ficará no arquivo .txt.",
-            display_name(&path)
+            human::file_name(&path)
         ))));
         self.text.set_text("Lendo…");
         self.scroll.set_visible(true);
@@ -704,7 +712,7 @@ impl TextPreview {
                     };
                     me.group.set_description(Some(&glib::markup_escape_text(&format!(
                         "Página {page} de “{}”, como ficará no arquivo .txt.{start}",
-                        display_name(&path)
+                        human::file_name(&path)
                     ))));
                     const MAX_LINES: usize = 60;
                     let lines: Vec<&str> = t.trim_end().lines().collect();

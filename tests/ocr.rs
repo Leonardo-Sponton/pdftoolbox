@@ -295,7 +295,7 @@ const LETTER: [&str; 12] = [
 
 /// Fração das palavras do texto original encontradas, na ordem, no texto extraído.
 fn recall(expected: &[&str], got: &str) -> f32 {
-    let got: Vec<String> = got.split_whitespace().map(|w| w.to_lowercase()).collect();
+    let got: Vec<String> = got.split_whitespace().map(str::to_lowercase).collect();
     let words: Vec<String> = expected.iter().flat_map(|l| l.split_whitespace()).map(str::to_lowercase).collect();
     let found = words.iter().filter(|w| got.contains(w)).count();
     found as f32 / words.len() as f32

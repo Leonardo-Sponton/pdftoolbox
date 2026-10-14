@@ -3,6 +3,7 @@
 
 mod annotator;
 mod dialogs;
+mod editor;
 mod home;
 mod organizer;
 mod page_preview;
@@ -28,6 +29,8 @@ use pdftoolbox::catalog::{ToolId, ToolInfo};
 pub use settings::{Settings, Theme};
 
 pub const APP_ID: &str = "io.github.leonardo_sponton.PDFToolbox";
+/// Etiqueta da tela inicial na navegação.
+const HOME: &str = "inicio";
 
 pub struct AppState {
     pub window: adw::ApplicationWindow,
@@ -67,7 +70,7 @@ impl AppState {
         if let Some(home) = self.home.borrow().as_ref() {
             home.add(files);
         }
-        self.nav.pop_to_tag("inicio");
+        self.nav.pop_to_tag(HOME);
     }
 }
 
@@ -99,9 +102,20 @@ pub fn startup(app: &adw::Application) {
             let theme = Theme::from_key(&key);
             theme.apply();
             action.set_state(&theme.key().to_variant());
-            let mut s = Settings::load();
-            s.theme = theme;
-            s.save();
+            // Grava pela cópia da janela, se existir: senão o próximo save()
+            // dela (recentes, opções) reverteria o tema escolhido.
+            match STATE.with(|s| s.borrow().clone()) {
+                Some(st) => {
+                    let mut s = st.settings.borrow_mut();
+                    s.theme = theme;
+                    s.save();
+                }
+                None => {
+                    let mut s = Settings::load();
+                    s.theme = theme;
+                    s.save();
+                }
+            }
         })
         .build();
     app.add_action_entries([quit, theme]);
@@ -160,123 +174,87 @@ fn build_window(app: &adw::Application) -> App {
     nav.add(&home.page);
     *state.home.borrow_mut() = Some(home.clone());
 
-    let weak = Rc::downgrade(&state);
-    let actions = [
-        gio::ActionEntry::builder("open")
-            .activate({
-                let weak = weak.clone();
-                move |_: &adw::ApplicationWindow, _, _| {
-                    let Some(st) = weak.upgrade() else { return };
-                    // Na tela inicial abre arquivos; nas ferramentas, delega à ação da página.
-                    let Some(page) = st.nav.visible_page() else { return };
-                    if page.tag().as_deref() == Some("inicio") {
-                        if let Some(home) = st.home.borrow().clone() {
-                            home.open_files();
-                        }
-                    } else {
-                        let _ = page.activate_action("page.add", None);
-                    }
+    let action = |name: &str, run: fn(&AppState)| {
+        gio::ActionEntry::builder(name)
+            .activate(glib::clone!(
+                #[weak]
+                state,
+                move |_: &adw::ApplicationWindow, _, _| run(&state)
+            ))
+            .build()
+    };
+    window.add_action_entries([
+        action("open", |st| {
+            // Na tela inicial abre arquivos; nas ferramentas, delega à ação da página.
+            let Some(page) = st.nav.visible_page() else { return };
+            if page.tag().as_deref() == Some(HOME) {
+                if let Some(home) = st.home.borrow().clone() {
+                    home.open_files();
                 }
-            })
-            .build(),
-        gio::ActionEntry::builder("search")
-            .activate({
-                let weak = weak.clone();
-                move |_: &adw::ApplicationWindow, _, _| {
-                    if let Some(st) = weak.upgrade() {
-                        st.nav.pop_to_tag("inicio");
-                        if let Some(home) = st.home.borrow().clone() {
-                            home.focus_search();
-                        }
-                    }
-                }
-            })
-            .build(),
-        gio::ActionEntry::builder("tasks")
-            .activate({
-                let weak = weak.clone();
-                move |_: &adw::ApplicationWindow, _, _| {
-                    if let Some(st) = weak.upgrade() {
-                        st.tasks.present(&st.window);
-                    }
-                }
-            })
-            .build(),
-        gio::ActionEntry::builder("dependencies")
-            .activate({
-                let weak = weak.clone();
-                move |_: &adw::ApplicationWindow, _, _| {
-                    if let Some(st) = weak.upgrade() {
-                        dialogs::dependencies(&st.window);
-                    }
-                }
-            })
-            .build(),
-        gio::ActionEntry::builder("about")
-            .activate({
-                let weak = weak.clone();
-                move |_: &adw::ApplicationWindow, _, _| {
-                    if let Some(st) = weak.upgrade() {
-                        dialogs::about(&st.window);
-                    }
-                }
-            })
-            .build(),
-        gio::ActionEntry::builder("home")
-            .activate({
-                let weak = weak.clone();
-                move |_: &adw::ApplicationWindow, _, _| {
-                    if let Some(st) = weak.upgrade() {
-                        st.nav.pop_to_tag("inicio");
-                    }
-                }
-            })
-            .build(),
-    ];
-    window.add_action_entries(actions);
-
-    // Avisar antes de fechar com tarefas em andamento ou alterações não
-    // salvas (páginas que não podem sair sozinhas: Organizar e Anotar).
-    window.connect_close_request({
-        let weak = weak.clone();
-        move |win| {
-            let Some(st) = weak.upgrade() else { return glib::Propagation::Proceed };
-            let unsaved =
-                st.nav.navigation_stack().iter::<adw::NavigationPage>().flatten().any(|p| !p.can_pop());
-            let running = st.tasks.running();
-            if running == 0 && !unsaved {
-                return glib::Propagation::Proceed;
+            } else {
+                let _ = page.activate_action("page.add", None);
             }
-            let (title, body) = match (running, unsaved) {
-                (0, _) => (
-                    "Descartar as alterações?",
-                    "Há alterações que ainda não foram salvas. Se fechar agora, elas serão perdidas; os PDFs originais não foram alterados.",
-                ),
-                (_, false) => (
-                    "Há tarefas em andamento",
-                    "Se fechar agora, as tarefas serão interrompidas e os arquivos parciais descartados.",
-                ),
-                _ => (
-                    "Há tarefas em andamento e alterações não salvas",
-                    "Se fechar agora, as tarefas serão interrompidas, os arquivos parciais descartados e as alterações não salvas perdidas.",
-                ),
-            };
-            let dialog = adw::AlertDialog::new(Some(title), Some(body));
-            dialog.add_responses(&[("ficar", "Continuar aqui"), ("sair", "Fechar mesmo assim")]);
-            dialog.set_response_appearance("sair", adw::ResponseAppearance::Destructive);
-            dialog.set_default_response(Some("ficar"));
-            dialog.set_close_response("ficar");
-            let win2 = win.clone();
-            dialog.connect_response(None, move |_, resp| {
-                if resp == "sair" {
-                    win2.destroy();
-                }
-            });
-            dialog.present(Some(win));
-            glib::Propagation::Stop
+        }),
+        action("search", |st| {
+            st.nav.pop_to_tag(HOME);
+            if let Some(home) = st.home.borrow().clone() {
+                home.focus_search();
+            }
+        }),
+        action("tasks", |st| st.tasks.present(&st.window)),
+        action("dependencies", |st| dialogs::dependencies(&st.window)),
+        action("about", |st| dialogs::about(&st.window)),
+        action("home", |st| {
+            st.nav.pop_to_tag(HOME);
+        }),
+    ]);
+    window.connect_close_request(glib::clone!(
+        #[weak]
+        state,
+        #[upgrade_or]
+        glib::Propagation::Proceed,
+        move |win| confirm_close(&state, win)
+    ));
+    state
+}
+
+/// Avisa antes de fechar com tarefas em andamento ou alterações não salvas
+/// (páginas que não podem sair sozinhas: Organizar e Anotar).
+fn confirm_close(st: &AppState, win: &adw::ApplicationWindow) -> glib::Propagation {
+    let unsaved = st.nav.navigation_stack().iter::<adw::NavigationPage>().flatten().any(|p| !p.can_pop());
+    let running = st.tasks.running();
+    if running == 0 && !unsaved {
+        return glib::Propagation::Proceed;
+    }
+    let (title, body) = match (running, unsaved) {
+        (0, _) => (
+            "Descartar as alterações?",
+            "Há alterações que ainda não foram salvas. Se fechar agora, elas serão perdidas; os PDFs originais não \
+             foram alterados.",
+        ),
+        (_, false) => (
+            "Há tarefas em andamento",
+            "Se fechar agora, as tarefas serão interrompidas e os arquivos parciais descartados.",
+        ),
+        _ => (
+            "Há tarefas em andamento e alterações não salvas",
+            "Se fechar agora, as tarefas serão interrompidas, os arquivos parciais descartados e as alterações não \
+             salvas perdidas.",
+        ),
+    };
+    let dialog = adw::AlertDialog::new(Some(title), Some(body));
+    dialog.add_responses(&[("ficar", "Continuar aqui"), ("sair", "Fechar mesmo assim")]);
+    dialog.set_response_appearance("sair", adw::ResponseAppearance::Destructive);
+    dialog.set_default_response(Some("ficar"));
+    dialog.set_close_response("ficar");
+    let window = win.clone();
+    dialog.connect_response(None, move |_, response| {
+        if response == "sair" {
+            window.destroy();
         }
     });
-    state
+    dialog.present(Some(win));
+    glib::Propagation::Stop
 }
 
 /// Menu principal, compartilhado pelas páginas.

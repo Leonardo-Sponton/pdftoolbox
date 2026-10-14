@@ -7,7 +7,7 @@
 
 use std::path::{Path, PathBuf};
 
-use super::{Destination, Outcome, batch, output_name, verify_pdf};
+use super::{Destination, Outcome, batch, batch_output_name, verify_pdf};
 use crate::engines::qpdf::{self, Encryption};
 use crate::error::{OpError, OpResult};
 use crate::jobs::{CancelToken, JobCtx};
@@ -62,7 +62,7 @@ pub fn protect(
                 return Err(OpError::InvalidRange(format!(
                     "“{}” já tem restrições definidas pelo autor. Remova-as antes com “Remover senha”, \
                      usando a senha de permissões.",
-                    crate::error::display_name(input)
+                    crate::human::file_name(input)
                 )));
             }
         }
@@ -104,7 +104,7 @@ pub fn protect(
             return Err(OpError::OutputInvalid(format!("esperava {total} página(s), mas o arquivo tem {pages}")));
         }
         let base = format!("{} - protegido", stem(input));
-        let name = if n == 1 { output_name(dest, &base, "pdf") } else { storage::sanitize_file_name(&base, "pdf") };
+        let name = batch_output_name(dest, n, &base, "pdf");
         outcome.push(storage::commit(&tmp, &dest.dir, &name)?);
         Ok(())
     })
@@ -143,7 +143,7 @@ pub fn unlock(inputs: &[PathBuf], password: &Secret, dest: &Destination, ctx: &J
         }
         verify_pdf(&tmp, total, ctx)?;
         let base = format!("{} - sem senha", stem(input));
-        let name = if n == 1 { output_name(dest, &base, "pdf") } else { storage::sanitize_file_name(&base, "pdf") };
+        let name = batch_output_name(dest, n, &base, "pdf");
         outcome.push(storage::commit(&tmp, &dest.dir, &name)?);
         Ok(())
     })
@@ -177,7 +177,7 @@ pub fn unlocked_copy(input: &Path, password: &Secret, cancel: &CancelToken) -> O
             return Err(OpError::OwnerPasswordRequired(input.to_path_buf()));
         }
         let total = qpdf::page_count_with_password(input, &pw_file, cancel)?;
-        let name = input.file_name().map(PathBuf::from).unwrap_or_else(|| "documento.pdf".into());
+        let name = input.file_name().map_or_else(|| "documento.pdf".into(), PathBuf::from);
         let path = dir.path().join(name);
         qpdf::decrypt(input, &pw_file, &path, cancel)?;
         if qpdf::encryption(&path, cancel)? != Encryption::None {

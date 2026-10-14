@@ -8,7 +8,7 @@ use adw::prelude::*;
 use gtk::glib;
 
 use pdftoolbox::catalog::{self, Accepts, Category, TOOLS, ToolId, ToolInfo};
-use pdftoolbox::error::display_name;
+use pdftoolbox::human;
 
 use super::{AppState, primary_menu, thumbs, widgets};
 
@@ -283,10 +283,11 @@ impl Home {
             child.set_child(Some(b));
             child.set_focusable(false);
             buttons.append(&child);
+            // O botão de sugestão some junto com o seu contêiner.
+            if b == &suggest {
+                suggest.bind_property("visible", &child, "visible").sync_create().build();
+            }
         }
-        // O botão de sugestão some junto com o seu contêiner.
-        let suggest_child = suggest.parent().expect("filho do FlowBox");
-        suggest.bind_property("visible", &suggest_child, "visible").sync_create().build();
         let head = gtk::Box::new(gtk::Orientation::Vertical, 10);
         head.append(&head_text);
         head.append(&buttons);
@@ -366,7 +367,7 @@ impl Home {
             let toolbar = adw::ToolbarView::new();
             toolbar.add_top_bar(&header);
             toolbar.set_content(Some(&content));
-            let page = adw::NavigationPage::with_tag(&toolbar, "PDFToolbox", "inicio");
+            let page = adw::NavigationPage::with_tag(&toolbar, "PDFToolbox", super::HOME);
 
             Home {
                 page,
@@ -391,51 +392,50 @@ impl Home {
             }
         });
 
-        {
-            let h = Rc::downgrade(&home);
-            search.connect_search_changed(move |_| {
-                if let Some(h) = h.upgrade() {
-                    h.filter();
+        search.connect_search_changed(glib::clone!(
+            #[weak]
+            home,
+            move |_| home.filter()
+        ));
+        search.connect_activate(glib::clone!(
+            #[weak]
+            home,
+            move |_| {
+                let query = home.search.text();
+                if let Some(info) = TOOLS.iter().find(|t| catalog::matches(t, &query)) {
+                    home.launch(info);
                 }
-            });
-            let h = Rc::downgrade(&home);
-            search.connect_activate(move |_| {
-                if let Some(h) = h.upgrade() {
-                    let q = h.search.text();
-                    if let Some(info) = TOOLS.iter().find(|t| catalog::matches(t, &q)) {
-                        h.launch(info);
-                    }
-                }
-            });
-            let h = Rc::downgrade(&home);
-            suggest.connect_clicked(move |_| {
-                if let Some(h) = h.upgrade()
-                    && let Some(id) = suggestion(&h.staged.borrow(), &h.locked.borrow(), &h.scanned.borrow())
-                {
-                    h.launch(catalog::info(id));
-                }
-            });
-            let h = Rc::downgrade(&home);
-            clear_button.connect_clicked(move |_| {
-                if let Some(h) = h.upgrade() {
-                    h.stage(Vec::new());
-                }
-            });
-            for b in [&open_button, &pick, &add_more] {
-                let h = Rc::downgrade(&home);
-                b.connect_clicked(move |_| {
-                    if let Some(h) = h.upgrade() {
-                        h.open_files();
-                    }
-                });
             }
-            let h = Rc::downgrade(&home);
-            widgets::add_file_drop(&home.page, move |files| {
-                if let Some(h) = h.upgrade() {
-                    h.add(files);
+        ));
+        suggest.connect_clicked(glib::clone!(
+            #[weak]
+            home,
+            move |_| {
+                if let Some(id) = home.suggestion() {
+                    home.launch(catalog::info(id));
                 }
-            });
+            }
+        ));
+        clear_button.connect_clicked(glib::clone!(
+            #[weak]
+            home,
+            move |_| home.stage(Vec::new())
+        ));
+        for b in [&open_button, &pick, &add_more] {
+            b.connect_clicked(glib::clone!(
+                #[weak]
+                home,
+                move |_| home.open_files()
+            ));
         }
+        widgets::add_file_drop(
+            &home.page,
+            glib::clone!(
+                #[weak]
+                home,
+                move |files| home.add(files)
+            ),
+        );
         home.refresh_recent();
         home
     }
@@ -491,10 +491,15 @@ impl Home {
         self.refresh_suggestion();
     }
 
+    /// Ferramenta sugerida para os arquivos escolhidos.
+    fn suggestion(&self) -> Option<ToolId> {
+        suggestion(&self.staged.borrow(), &self.locked.borrow(), &self.scanned.borrow())
+    }
+
     /// Recalcula a sugestão e o estado dos cartões de ferramenta.
     fn refresh_suggestion(&self) {
         let files = self.staged.borrow().clone();
-        let suggested = suggestion(&files, &self.locked.borrow(), &self.scanned.borrow());
+        let suggested = self.suggestion();
         // Atalho para a ferramenta mais provável, junto dos arquivos.
         self.suggest.set_visible(suggested.is_some());
         if let Some(id) = suggested {
@@ -539,7 +544,7 @@ impl Home {
         let overlay = gtk::Overlay::builder().child(&holder).build();
         overlay.add_overlay(&remove);
         let name = gtk::Label::builder()
-            .label(display_name(path))
+            .label(human::file_name(path))
             .ellipsize(gtk::pango::EllipsizeMode::Middle)
             .max_width_chars(18)
             .build();
@@ -586,14 +591,15 @@ impl Home {
                 h.refresh_suggestion();
             }
         });
-        let h = Rc::downgrade(self);
         let p = path.to_path_buf();
-        remove.connect_clicked(move |_| {
-            if let Some(h) = h.upgrade() {
-                let rest: Vec<PathBuf> = h.staged.borrow().iter().filter(|f| **f != p).cloned().collect();
-                h.stage(rest);
+        remove.connect_clicked(glib::clone!(
+            #[weak(rename_to = home)]
+            self,
+            move |_| {
+                let rest: Vec<PathBuf> = home.staged.borrow().iter().filter(|f| **f != p).cloned().collect();
+                home.stage(rest);
             }
-        });
+        ));
         let child = gtk::FlowBoxChild::new();
         child.set_child(Some(&card));
         child.set_focusable(false);
@@ -616,15 +622,17 @@ impl Home {
         let recent: Vec<&'static ToolInfo> =
             app.settings.borrow().recent.iter().filter_map(|k| catalog::by_key(k)).take(3).collect();
         let staged = self.staged.borrow().clone();
-        let suggested = suggestion(&staged, &self.locked.borrow(), &self.scanned.borrow());
+        let suggested = self.suggestion();
         let mut cards = Vec::new();
         for info in &recent {
-            let h = Rc::downgrade(self);
-            let card = tool_card(info, move |info| {
-                if let Some(h) = h.upgrade() {
-                    h.launch(info);
-                }
-            });
+            let card = tool_card(
+                info,
+                glib::clone!(
+                    #[weak(rename_to = home)]
+                    self,
+                    move |info| home.launch(info)
+                ),
+            );
             card.reflect(&staged, suggested);
             self.recent_box.append(&card.child);
             cards.push(card);

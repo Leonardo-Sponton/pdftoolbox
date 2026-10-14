@@ -19,11 +19,19 @@ src/
 │   ├── annotate.rs   anotações (texto, imagem, destaque, moldura): caixas em
 │   │                 pontos e a camada de cada página
 │   ├── error.rs      OpError: mensagem ao usuário (pt-BR) + detalhe técnico
+│   ├── human.rs      textos para pessoas: nome de arquivo, tamanho, plural,
+│   │                 vírgula decimal
 │   ├── jobs.rs       CancelToken, JobCtx (progresso), fila com limite de 2 tarefas
-│   ├── operations/   Request → Outcome; validação e gravação dos resultados
+│   ├── operations/   Request → Outcome; validação e gravação dos resultados.
+│   │                 mod.rs tem o que as operações compartilham: lote, nomes
+│   │                 de saída, verificação e `parallel_map` (páginas em paralelo)
 │   ├── pages.rs      interpretação de seleções de páginas (“1-3, 5, 8-”)
-│   ├── pdfwriter.rs  gerador mínimo de PDF (imagens → PDF, fixtures) e `place`,
-│   │                 a regra de posicionamento usada também pela pré-visualização
+│   ├── pdfwriter/    gerador mínimo de PDF
+│   │   ├── mod.rs    escrita de objetos, páginas e tabela; fixtures de texto
+│   │   ├── images.rs imagens → PDF e `place`, a regra de posicionamento usada
+│   │   │             também pela pré-visualização
+│   │   ├── overlay.rs  camadas sobrepostas (carimbos, anotações, assinaturas)
+│   │   └── invisible.rs  camada de texto invisível do OCR
 │   ├── preview.rs    planos de pré-visualização: o que cada ferramenta fará com
 │   │                 cada página, com as mesmas regras das operações
 │   ├── secret.rs     senhas que nunca aparecem em Debug e são zeradas ao descartar
@@ -35,11 +43,24 @@ build.rs              compila data/resources (ícones simbólicos) em GResource
 └── ui/               interface libadwaita — nenhum processamento aqui
     ├── mod.rs        janela, navegação, ações, atalhos
     ├── home.rs       tela inicial: soltar arquivos, busca, recentes, categorias
-    ├── tool_page.rs  página genérica: arquivos → opções → destino → executar → resultado
+    ├── tool_page/    página genérica: arquivos → opções → destino → executar → resultado
+    │   ├── mod.rs    estrutura da página, lista de arquivos, pré-visualizações
+    │   ├── options.rs  linhas de opções de cada ferramenta
+    │   ├── form.rs   leitura do formulário: Request, plano, validação, rótulos
+    │   ├── background.rs  campos em segundo plano (idiomas do OCR, metadados,
+    │   │             estimativa de compressão)
+    │   ├── run.rs    execução, progresso e resultado
+    │   └── texts.rs  textos que dependem só de dados (com testes)
+    ├── editor.rs     partes comuns de Organizar e Anotar: cabeçalho, telas de
+    │                 escolha/carregamento/erro, descarte, desfazer, gravação
     ├── organizer.rs  grade de miniaturas com arrastar/soltar
-    ├── annotator.rs  Anotar e assinar: página grande (cairo), arrastar e teclado
+    ├── annotator/    Anotar e assinar
+    │   ├── mod.rs    estado, documento, anotações e gravação
+    │   ├── canvas.rs página grande (cairo): desenho, mouse, teclado, zoom
+    │   └── panel.rs  painel lateral: adicionar, propriedades, lista
     ├── page_preview.rs  grade de páginas marcadas pelo plano; folhas de Imagens para PDF;
     │                 “Como vai ficar” (página real com o carimbo); prévia de texto
+    ├── page_zoom.rs  página ampliada; gestos e controles de zoom compartilhados
     ├── page_thumb.rs widget de miniatura com o formato (e a rotação) da página
     ├── thumbs.rs     miniaturas e dados dos arquivos, em segundo plano, com cache em memória
     ├── theme.rs      paleta (MyNotes) gerada em CSS para libadwaita 1.5 e 1.6+
@@ -47,7 +68,7 @@ build.rs              compila data/resources (ícones simbólicos) em GResource
     ├── unlock.rs     PDFs com senha: diálogo e cópias desbloqueadas da sessão
     ├── dialogs.rs    dependências, sobre
     ├── settings.rs   preferências (tema, recentes, última pasta)
-    └── widgets.rs    seletores de arquivo, utilitários
+    └── widgets.rs    seletores de arquivo, atalhos, utilitários
 ```
 
 ## Fluxo de uma operação
@@ -93,8 +114,11 @@ está em praticamente toda distribuição GNOME e cobre renderização e miniatu
 janela única (GtkApplication é de instância única).
 
 **Interface sem subclasses GObject.** Cada página é uma struct Rust em `Rc`
-presa ao tempo de vida do widget (`connect_destroy`), com `Weak` nos callbacks
-para evitar ciclos. O organizador reaproveita as células do `GtkFlowBox` em
+presa ao tempo de vida do widget (`widgets::keep_alive`), com referências
+fracas nos callbacks para evitar ciclos (`glib::clone!` com `#[weak]` nos
+sinais; `Rc::downgrade` explícito nas tarefas assíncronas, que só reabrem a
+referência depois do `await`). A página também nunca guarda uma referência
+forte ao próprio `NavigationPage`. O organizador reaproveita as células do `GtkFlowBox` em
 vez de recriá-las: `remove_all()` seguido de navegação por teclado causava
 falha de segmentação dentro do GTK 4.24 (cursor inválido).
 
@@ -127,8 +151,10 @@ para o canto da página.
    em `Request`.
 2. Escreva testes em `tests/` conferindo o **conteúdo** do resultado.
 3. Registre-a em `catalog::TOOLS` (com `needs` = motores exigidos).
-4. Adicione as opções em `ui/tool_page.rs` (`Options` + `build_options` +
-   `request`).
+4. Adicione as opções em `ui/tool_page/`: a variante de `Options` e as
+   linhas em `options.rs` (`Options::build`, `connect_changes`, `entries`) e
+   a leitura em `form.rs` (`request`, `single_output`, `action_label` e, se
+   houver pré-visualização, `plan`).
 5. Atualize `FEATURE_MATRIX.md` e `CHANGELOG.md`.
 
 ## Pré-visualização

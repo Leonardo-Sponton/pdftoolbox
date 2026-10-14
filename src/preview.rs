@@ -3,6 +3,7 @@
 //! interface usa o plano para marcar as miniaturas e escrever o resumo.
 
 use crate::error::{OpError, OpResult};
+use crate::human;
 use crate::operations::SplitMode;
 use crate::pages;
 use crate::stamp::{self, NumberFormat};
@@ -64,10 +65,6 @@ impl Plan {
     pub fn marked(&self) -> Vec<bool> {
         self.marks.iter().map(|m| m.kind != MarkKind::Normal).collect()
     }
-}
-
-fn plural(n: usize, singular: &str, plural: &str) -> String {
-    format!("{n} {}", if n == 1 { singular } else { plural })
 }
 
 pub fn angle_text(angle: i32) -> &'static str {
@@ -186,13 +183,13 @@ pub fn extract(spec: &str, separate: bool, total: u32) -> OpResult<Plan> {
     } else if in_order {
         format!(
             "{} {} para um novo PDF.",
-            plural(n, "página", "páginas"),
+            human::plural(n, "página", "páginas"),
             if n == 1 { "será copiada" } else { "serão copiadas" }
         )
     } else {
         format!(
             "{} {} para um novo PDF, na ordem digitada (veja os números sobre as páginas).",
-            plural(n, "página", "páginas"),
+            human::plural(n, "página", "páginas"),
             if n == 1 { "será copiada" } else { "serão copiadas" }
         )
     };
@@ -213,9 +210,9 @@ pub fn remove(spec: &str, total: u32) -> OpResult<Plan> {
     let gone = total as usize - keep.len();
     let summary = format!(
         "{} {}; o novo PDF terá {}.",
-        plural(gone, "página", "páginas"),
+        human::plural(gone, "página", "páginas"),
         if gone == 1 { "será removida" } else { "serão removidas" },
-        plural(keep.len(), "página", "páginas")
+        human::plural(keep.len(), "página", "páginas")
     );
     Ok(Plan { marks, summary })
 }
@@ -247,14 +244,14 @@ pub fn split(mode: &SplitMode, total: u32) -> OpResult<Plan> {
         })
         .collect();
     let excluded = marks.iter().filter(|m| m.kind == MarkKind::Excluded).count();
-    let mut summary = format!("Serão criados {}.", plural(groups.len(), "arquivo", "arquivos"));
+    let mut summary = format!("Serão criados {}.", human::plural(groups.len(), "arquivo", "arquivos"));
     if groups.len() == 1 {
         summary = "Será criado 1 arquivo.".into();
     }
     if excluded > 0 {
         summary.push_str(&format!(
             " {} não {} em nenhum intervalo e {} de fora.",
-            plural(excluded, "página", "páginas"),
+            human::plural(excluded, "página", "páginas"),
             if excluded == 1 { "está" } else { "estão" },
             if excluded == 1 { "fica" } else { "ficam" }
         ));

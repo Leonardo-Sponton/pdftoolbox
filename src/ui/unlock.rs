@@ -18,7 +18,7 @@ use gtk::glib;
 use pdftoolbox::OpError;
 use pdftoolbox::catalog::{self, Accepts};
 use pdftoolbox::engines::qpdf::{self, Encryption};
-use pdftoolbox::error::display_name;
+use pdftoolbox::human;
 use pdftoolbox::jobs::CancelToken;
 use pdftoolbox::operations::{Secret, UnlockedCopy, unlocked_copy};
 
@@ -89,7 +89,7 @@ pub async fn prepare(app: &Rc<AppState>, files: Vec<PathBuf>) -> Vec<PathBuf> {
     }
     match skipped.as_slice() {
         [] => {}
-        [one] => app.toast(&format!("“{}” ficou de fora: é preciso a senha para abri-lo.", display_name(one))),
+        [one] => app.toast(&format!("“{}” ficou de fora: é preciso a senha para abri-lo.", human::file_name(one))),
         many => app.toast(&format!("{} PDFs ficaram de fora: é preciso a senha para abri-los.", many.len())),
     }
     ready
@@ -128,7 +128,7 @@ async fn dialog(app: &Rc<AppState>, file: &Path, problem: Option<&str>) -> Optio
         .body(format!(
             "Digite a senha de “{}”. A ferramenta trabalha numa cópia temporária desbloqueada; o original \
              continua como está e o resultado é salvo sem senha.",
-            display_name(file)
+            human::file_name(file)
         ))
         .close_response("cancelar")
         .default_response("abrir")

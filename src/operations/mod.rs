@@ -10,6 +10,8 @@ mod organize;
 mod security;
 
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::{Mutex, MutexGuard, PoisonError};
 
 pub use crate::annotate::{Annotation, Kind as AnnotationKind};
 pub use crate::engines::poppler::ImageFormat;
@@ -25,7 +27,7 @@ pub use security::{Restrictions, UnlockedCopy, unlocked_copy};
 
 use crate::engines::qpdf;
 use crate::error::{OpError, OpResult};
-use crate::jobs::JobCtx;
+use crate::jobs::{CancelToken, JobCtx};
 use crate::storage;
 
 /// Destino escolhido pelo usuário.
@@ -151,7 +153,7 @@ pub struct Outcome {
 
 impl Outcome {
     fn push(&mut self, path: PathBuf) {
-        let size = std::fs::metadata(&path).map(|m| m.len()).unwrap_or(0);
+        let size = std::fs::metadata(&path).map_or(0, |m| m.len());
         self.outputs.push(OutputFile { path, size });
     }
 }
@@ -190,6 +192,12 @@ pub fn execute(req: Request, dest: &Destination, ctx: &JobCtx) -> OpResult<Outco
 fn output_name(dest: &Destination, suggested: &str, ext: &str) -> String {
     let name = dest.name.as_deref().map(str::trim).filter(|n| !n.is_empty()).unwrap_or(suggested);
     storage::sanitize_file_name(name, ext)
+}
+
+/// Nome de uma saída de lote: o nome digitado pelo usuário só vale quando
+/// o lote tem um único arquivo; nos demais, cada saída usa o sugerido.
+fn batch_output_name(dest: &Destination, batch_size: usize, suggested: &str, ext: &str) -> String {
+    if batch_size == 1 { output_name(dest, suggested, ext) } else { storage::sanitize_file_name(suggested, ext) }
 }
 
 /// Confere se o PDF gerado abre e tem o número de páginas esperado.
@@ -233,13 +241,52 @@ fn batch(
     Ok(outcome)
 }
 
-pub fn human_size(bytes: u64) -> String {
-    const UNITS: [&str; 4] = ["B", "KB", "MB", "GB"];
-    let mut v = bytes as f64;
-    let mut unit = 0;
-    while v >= 1024.0 && unit < UNITS.len() - 1 {
-        v /= 1024.0;
-        unit += 1;
+/// Executa `work` para cada item em até `workers` threads (cada uma pega o
+/// próximo item livre). Para no primeiro erro ou no cancelamento;
+/// `on_done(n)` recebe quantos itens já terminaram, para o progresso.
+/// Devolve os resultados na ordem de `items`.
+fn parallel_map<T: Sync, R: Send>(
+    items: &[T],
+    workers: usize,
+    cancel: &CancelToken,
+    work: impl Fn(&T) -> OpResult<R> + Sync,
+    on_done: impl Fn(usize) + Sync,
+) -> OpResult<Vec<R>> {
+    fn lock<V>(m: &Mutex<V>) -> MutexGuard<'_, V> {
+        m.lock().unwrap_or_else(PoisonError::into_inner)
     }
-    if unit == 0 { format!("{bytes} B") } else { format!("{v:.1} {}", UNITS[unit]).replace('.', ",") }
+    let next = AtomicUsize::new(0);
+    let done = AtomicUsize::new(0);
+    let results: Mutex<Vec<Option<R>>> = Mutex::new(items.iter().map(|_| None).collect());
+    let first_error: Mutex<Option<OpError>> = Mutex::new(None);
+    std::thread::scope(|scope| {
+        for _ in 0..workers.min(items.len()) {
+            scope.spawn(|| {
+                while !cancel.is_cancelled() && lock(&first_error).is_none() {
+                    let k = next.fetch_add(1, Ordering::SeqCst);
+                    let Some(item) = items.get(k) else { break };
+                    match work(item) {
+                        Ok(result) => {
+                            lock(&results)[k] = Some(result);
+                            on_done(done.fetch_add(1, Ordering::SeqCst) + 1);
+                        }
+                        Err(e) => {
+                            lock(&first_error).get_or_insert(e);
+                            break;
+                        }
+                    }
+                }
+            });
+        }
+    });
+    cancel.check()?;
+    if let Some(e) = first_error.into_inner().unwrap_or_else(PoisonError::into_inner) {
+        return Err(e);
+    }
+    results
+        .into_inner()
+        .unwrap_or_else(PoisonError::into_inner)
+        .into_iter()
+        .collect::<Option<Vec<R>>>()
+        .ok_or_else(|| OpError::OutputInvalid("faltou o resultado de alguma página".into()))
 }

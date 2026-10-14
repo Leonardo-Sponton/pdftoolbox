@@ -13,7 +13,7 @@ use std::rc::Rc;
 use adw::prelude::*;
 use gtk::{gdk, glib};
 
-use pdftoolbox::error::display_name;
+use pdftoolbox::human;
 
 use super::page_thumb::PageThumb;
 use super::thumbs;
@@ -27,9 +27,126 @@ pub const MAX_ZOOM: f64 = 6.0;
 /// Passo das teclas e botões de zoom.
 const STEP: f64 = 1.25;
 
-/// Ponto a manter parado durante o zoom: fração do conteúdo e posição na
-/// vista, (x, y) em cada um.
-pub type ZoomAnchor = ((f64, f64), (f64, f64));
+/// Mantém parado um ponto da vista enquanto o conteúdo de uma
+/// `ScrolledWindow` muda de tamanho (zoom): depois do layout, as barras de
+/// rolagem são acertadas para o ponto continuar sob o ponteiro.
+#[derive(Clone)]
+pub struct ZoomAnchor {
+    point: Rc<Cell<Option<AnchorPoint>>>,
+}
+
+/// Ponto ancorado, (x, y) em cada campo.
+#[derive(Clone, Copy)]
+struct AnchorPoint {
+    /// Fração do conteúdo sob o ponto.
+    fraction: (f64, f64),
+    /// Posição do ponto na vista, em pixels.
+    offset: (f64, f64),
+}
+
+impl ZoomAnchor {
+    pub fn attach(view: &gtk::ScrolledWindow) -> ZoomAnchor {
+        let anchor = ZoomAnchor { point: Rc::default() };
+        for horizontal in [true, false] {
+            let adj = if horizontal { view.hadjustment() } else { view.vadjustment() };
+            let point = anchor.point.clone();
+            adj.connect_upper_notify(move |adj| {
+                if let Some(AnchorPoint { fraction: (fx, fy), offset: (px, py) }) = point.get() {
+                    let (f, p) = if horizontal { (fx, px) } else { (fy, py) };
+                    adj.set_value(f * adj.upper() - p);
+                }
+            });
+        }
+        anchor
+    }
+
+    /// Fixa o ponto `at` da vista (padrão: o centro) até o próximo layout.
+    pub fn hold(&self, view: &gtk::ScrolledWindow, at: Option<(f64, f64)>) {
+        let (h, v) = (view.hadjustment(), view.vadjustment());
+        let (px, py) = at.unwrap_or((h.page_size() / 2.0, v.page_size() / 2.0));
+        let frac =
+            |adj: &gtk::Adjustment, p: f64| if adj.upper() > 0.0 { (adj.value() + p) / adj.upper() } else { 0.5 };
+        self.point.set(Some(AnchorPoint { fraction: (frac(&h, px), frac(&v, py)), offset: (px, py) }));
+        let point = self.point.clone();
+        glib::timeout_add_local_once(std::time::Duration::from_millis(150), move || point.set(None));
+    }
+}
+
+/// Ctrl+roda e pinça em `view` mudam a escala em volta do ponteiro (ou do
+/// centro da pinça). `current` dá a escala atual (`None`: nada a ampliar);
+/// `zoom_to` aplica a nova escala mantendo parado o ponto dado.
+pub fn connect_zoom_input(
+    view: &gtk::ScrolledWindow,
+    current: impl Fn() -> Option<f64> + 'static,
+    zoom_to: impl Fn(f64, Option<(f64, f64)>) + 'static,
+) {
+    let (current, zoom_to) = (Rc::new(current), Rc::new(zoom_to));
+    // Posição do ponteiro na vista, para aproximar em volta dela.
+    let pointer = Rc::new(Cell::new(None::<(f64, f64)>));
+    let motion = gtk::EventControllerMotion::new();
+    let p = pointer.clone();
+    motion.connect_motion(move |_, x, y| p.set(Some((x, y))));
+    let p = pointer.clone();
+    motion.connect_leave(move |_| p.set(None));
+    view.add_controller(motion);
+
+    let scroll = gtk::EventControllerScroll::new(gtk::EventControllerScrollFlags::VERTICAL);
+    // Antes da rolagem da própria ScrolledWindow.
+    scroll.set_propagation_phase(gtk::PropagationPhase::Capture);
+    let (c, z) = (current.clone(), zoom_to.clone());
+    scroll.connect_scroll(move |controller, _, dy| {
+        if !controller.current_event_state().contains(gdk::ModifierType::CONTROL_MASK) {
+            return glib::Propagation::Proceed;
+        }
+        if let Some(scale) = c() {
+            z(scale * if dy < 0.0 { 1.1 } else { 1.0 / 1.1 }, pointer.get());
+        }
+        glib::Propagation::Stop
+    });
+    view.add_controller(scroll);
+
+    let pinch = gtk::GestureZoom::new();
+    let start = Rc::new(Cell::new(None::<f64>));
+    let s = start.clone();
+    pinch.connect_begin(move |_, _| s.set(current()));
+    pinch.connect_scale_changed(move |g, scale| {
+        if let Some(begin) = start.get() {
+            zoom_to(begin * scale, g.bounding_box_center());
+        }
+    });
+    view.add_controller(pinch);
+}
+
+/// Botões “Afastar”, escala atual (volta a ajustar) e “Aproximar”.
+pub struct ZoomControls {
+    pub widget: gtk::Box,
+    pub zoom_out: gtk::Button,
+    pub fit: gtk::Button,
+    pub zoom_in: gtk::Button,
+}
+
+impl ZoomControls {
+    pub fn new(out_tooltip: &str, fit_tooltip: &str, in_tooltip: &str) -> ZoomControls {
+        let zoom_out = super::widgets::icon_button("zoom-out-symbolic", out_tooltip);
+        let zoom_in = super::widgets::icon_button("zoom-in-symbolic", in_tooltip);
+        let fit = gtk::Button::builder().label(zoom_label(1.0)).tooltip_text(fit_tooltip).build();
+        fit.add_css_class("flat");
+        fit.add_css_class("numeric");
+        let widget = gtk::Box::new(gtk::Orientation::Horizontal, 0);
+        widget.add_css_class("linked");
+        widget.append(&zoom_out);
+        widget.append(&fit);
+        widget.append(&zoom_in);
+        ZoomControls { widget, zoom_out, fit, zoom_in }
+    }
+
+    /// Mostra a ampliação `relative` (1 = ajustada) e o que ainda é possível.
+    pub fn show(&self, relative: f64, can_zoom_out: bool, can_zoom_in: bool) {
+        self.fit.set_label(&zoom_label(relative));
+        self.zoom_out.set_sensitive(can_zoom_out);
+        self.zoom_in.set_sensitive(can_zoom_in);
+    }
+}
 
 /// “Ajustada”, “1,5×”, “2×”.
 pub fn zoom_label(z: f64) -> String {
@@ -38,7 +155,7 @@ pub fn zoom_label(z: f64) -> String {
     } else if (z - z.round()).abs() < 0.05 {
         format!("{}×", z.round())
     } else {
-        format!("{:.1}×", z).replace('.', ",")
+        format!("{}×", human::decimal(z, 1))
     }
 }
 
@@ -63,13 +180,10 @@ struct Zoom {
     /// Tamanho da página ajustada à janela.
     fit: (i32, i32),
     zoom: Cell<f64>,
-    /// Ponto a manter sob o ponteiro depois do zoom: fração do conteúdo e
-    /// posição na vista, por eixo.
-    anchor: Cell<Option<ZoomAnchor>>,
+    /// Ponto a manter sob o ponteiro depois do zoom.
+    anchor: ZoomAnchor,
     scroller: gtk::ScrolledWindow,
-    zoom_label: gtk::Button,
-    zoom_out: gtk::Button,
-    zoom_in: gtk::Button,
+    controls: ZoomControls,
     /// Renderização maior em andamento: (página, lado).
     pending: Cell<Option<(u32, u32)>>,
     spinner: gtk::Spinner,
@@ -87,23 +201,14 @@ pub fn show(parent: &impl IsA<gtk::Widget>, path: PathBuf, items: Vec<ZoomItem>,
     let width = ((win_w as f64 * 0.92) as i32).min(1100);
     let height = (win_h as f64 * 0.94) as i32;
 
-    let title = adw::WindowTitle::new("", &display_name(&path));
+    let title = adw::WindowTitle::new("", &human::file_name(&path));
     let header = adw::HeaderBar::builder().title_widget(&title).build();
     let prev = super::widgets::icon_button("go-previous-symbolic", "Página anterior (←)");
     let next = super::widgets::icon_button("go-next-symbolic", "Próxima página (→)");
     header.pack_start(&prev);
     header.pack_start(&next);
-    let zoom_out = super::widgets::icon_button("zoom-out-symbolic", "Afastar (−)");
-    let zoom_in = super::widgets::icon_button("zoom-in-symbolic", "Aproximar (+)");
-    let zoom_label = gtk::Button::builder().label(zoom_label(1.0)).tooltip_text("Ajustar à janela (0)").build();
-    zoom_label.add_css_class("flat");
-    zoom_label.add_css_class("numeric");
-    let zoom_box = gtk::Box::new(gtk::Orientation::Horizontal, 0);
-    zoom_box.add_css_class("linked");
-    zoom_box.append(&zoom_out);
-    zoom_box.append(&zoom_label);
-    zoom_box.append(&zoom_in);
-    header.pack_end(&zoom_box);
+    let controls = ZoomControls::new("Afastar (−)", "Ajustar à janela (0)", "Aproximar (+)");
+    header.pack_end(&controls.widget);
 
     // Altura útil: descontando a barra de título e as margens.
     let fit = (width - 32, height - 47 - 32);
@@ -135,62 +240,61 @@ pub fn show(parent: &impl IsA<gtk::Widget>, path: PathBuf, items: Vec<ZoomItem>,
         thumb,
         fit,
         zoom: Cell::new(1.0),
-        anchor: Cell::new(None),
+        anchor: ZoomAnchor::attach(&scroller),
         scroller: scroller.clone(),
-        zoom_label: zoom_label.clone(),
-        zoom_out: zoom_out.clone(),
-        zoom_in: zoom_in.clone(),
+        controls,
         pending: Cell::new(None),
         spinner,
         title,
         prev: prev.clone(),
         next: next.clone(),
     });
-    for (button, factor) in [(&zoom_out, 1.0 / STEP), (&zoom_in, STEP)] {
-        let z = Rc::downgrade(&zoom);
-        button.connect_clicked(move |_| {
-            if let Some(z) = z.upgrade() {
-                z.zoom_by(factor, None);
-            }
-        });
+    for (button, factor) in [(&zoom.controls.zoom_out, 1.0 / STEP), (&zoom.controls.zoom_in, STEP)] {
+        button.connect_clicked(glib::clone!(
+            #[weak]
+            zoom,
+            move |_| zoom.zoom_by(factor, None)
+        ));
     }
-    let z = Rc::downgrade(&zoom);
-    zoom_label.connect_clicked(move |_| {
-        if let Some(z) = z.upgrade() {
-            z.set_zoom(1.0, None);
-        }
-    });
+    zoom.controls.fit.connect_clicked(glib::clone!(
+        #[weak]
+        zoom,
+        move |_| zoom.set_zoom(1.0, None)
+    ));
     zoom.connect_view_gestures();
     for (button, delta) in [(&prev, -1isize), (&next, 1)] {
-        let z = Rc::downgrade(&zoom);
-        button.connect_clicked(move |_| {
-            if let Some(z) = z.upgrade() {
-                z.step(delta);
-            }
-        });
+        button.connect_clicked(glib::clone!(
+            #[weak]
+            zoom,
+            move |_| zoom.step(delta)
+        ));
     }
     let keys = gtk::EventControllerKey::new();
     keys.set_propagation_phase(gtk::PropagationPhase::Capture);
-    let (z, d) = (Rc::downgrade(&zoom), dialog.downgrade());
-    keys.connect_key_pressed(move |_, key, _, _| {
-        let Some(z) = z.upgrade() else { return glib::Propagation::Proceed };
-        match key {
-            gdk::Key::Left | gdk::Key::Page_Up | gdk::Key::Up => z.step(-1),
-            gdk::Key::Right | gdk::Key::Page_Down | gdk::Key::Down => z.step(1),
-            gdk::Key::Home => z.go(0),
-            gdk::Key::End => z.go(z.items.len() - 1),
-            gdk::Key::plus | gdk::Key::equal | gdk::Key::KP_Add => z.zoom_by(STEP, None),
-            gdk::Key::minus | gdk::Key::KP_Subtract => z.zoom_by(1.0 / STEP, None),
-            gdk::Key::_0 | gdk::Key::KP_0 => z.set_zoom(1.0, None),
-            gdk::Key::space => {
-                if let Some(d) = d.upgrade() {
-                    d.close();
+    keys.connect_key_pressed(glib::clone!(
+        #[weak(rename_to = z)]
+        zoom,
+        #[weak]
+        dialog,
+        #[upgrade_or]
+        glib::Propagation::Proceed,
+        move |_, key, _, _| {
+            match key {
+                gdk::Key::Left | gdk::Key::Page_Up | gdk::Key::Up => z.step(-1),
+                gdk::Key::Right | gdk::Key::Page_Down | gdk::Key::Down => z.step(1),
+                gdk::Key::Home => z.go(0),
+                gdk::Key::End => z.go(z.items.len() - 1),
+                gdk::Key::plus | gdk::Key::equal | gdk::Key::KP_Add => z.zoom_by(STEP, None),
+                gdk::Key::minus | gdk::Key::KP_Subtract => z.zoom_by(1.0 / STEP, None),
+                gdk::Key::_0 | gdk::Key::KP_0 => z.set_zoom(1.0, None),
+                gdk::Key::space => {
+                    dialog.close();
                 }
+                _ => return glib::Propagation::Proceed,
             }
-            _ => return glib::Propagation::Proceed,
+            glib::Propagation::Stop
         }
-        glib::Propagation::Stop
-    });
+    ));
     dialog.add_controller(keys);
     zoom.go(start);
     dialog.present(Some(parent));
@@ -203,83 +307,44 @@ pub fn show(parent: &impl IsA<gtk::Widget>, path: PathBuf, items: Vec<ZoomItem>,
 impl Zoom {
     /// Ctrl+roda e pinça aproximam em volta do ponteiro; arrastar move a vista.
     fn connect_view_gestures(self: &Rc<Self>) {
-        // Posição do ponteiro na vista, para aproximar em volta dela.
-        let pointer = Rc::new(Cell::new(None::<(f64, f64)>));
-        let motion = gtk::EventControllerMotion::new();
-        let p = pointer.clone();
-        motion.connect_motion(move |_, x, y| p.set(Some((x, y))));
-        let p = pointer.clone();
-        motion.connect_leave(move |_| p.set(None));
-        self.scroller.add_controller(motion);
-        let scroll = gtk::EventControllerScroll::new(gtk::EventControllerScrollFlags::VERTICAL);
-        // Antes da rolagem da própria ScrolledWindow.
-        scroll.set_propagation_phase(gtk::PropagationPhase::Capture);
-        let z = Rc::downgrade(self);
-        scroll.connect_scroll(move |c, _, dy| {
-            let Some(z) = z.upgrade() else { return glib::Propagation::Proceed };
-            if !c.current_event_state().contains(gdk::ModifierType::CONTROL_MASK) {
-                return glib::Propagation::Proceed;
+        let weak = Rc::downgrade(self);
+        let current = move || weak.upgrade().map(|z| z.zoom.get());
+        let weak = Rc::downgrade(self);
+        let zoom_to = move |scale, at| {
+            if let Some(z) = weak.upgrade() {
+                z.set_zoom(scale, at);
             }
-            z.zoom_by(if dy < 0.0 { 1.1 } else { 1.0 / 1.1 }, pointer.get());
-            glib::Propagation::Stop
-        });
-        self.scroller.add_controller(scroll);
-
-        let pinch = gtk::GestureZoom::new();
-        let start = Rc::new(Cell::new(1.0));
-        let (z, s) = (Rc::downgrade(self), start.clone());
-        pinch.connect_begin(move |_, _| {
-            if let Some(z) = z.upgrade() {
-                s.set(z.zoom.get());
-            }
-        });
-        let z = Rc::downgrade(self);
-        pinch.connect_scale_changed(move |g, scale| {
-            if let Some(z) = z.upgrade() {
-                z.set_zoom(start.get() * scale, g.bounding_box_center());
-            }
-        });
-        self.scroller.add_controller(pinch);
+        };
+        connect_zoom_input(&self.scroller, current, zoom_to);
 
         let pan = gtk::GestureDrag::new();
         let origin = Rc::new(Cell::new((0.0, 0.0)));
-        let (z, o) = (Rc::downgrade(self), origin.clone());
-        pan.connect_drag_begin(move |_, _, _| {
-            if let Some(z) = z.upgrade() {
+        let o = origin.clone();
+        pan.connect_drag_begin(glib::clone!(
+            #[weak(rename_to = z)]
+            self,
+            move |_, _, _| {
                 o.set((z.scroller.hadjustment().value(), z.scroller.vadjustment().value()));
                 if z.zoom.get() > 1.0 {
                     z.scroller.set_cursor_from_name(Some("grabbing"));
                 }
             }
-        });
-        let z = Rc::downgrade(self);
-        pan.connect_drag_update(move |_, dx, dy| {
-            if let Some(z) = z.upgrade() {
+        ));
+        pan.connect_drag_update(glib::clone!(
+            #[weak(rename_to = z)]
+            self,
+            move |_, dx, dy| {
                 let (x, y) = origin.get();
                 z.scroller.hadjustment().set_value(x - dx);
                 z.scroller.vadjustment().set_value(y - dy);
             }
-        });
-        let z = Rc::downgrade(self);
-        pan.connect_drag_end(move |_, _, _| {
-            if let Some(z) = z.upgrade() {
-                z.update_cursor();
-            }
-        });
+        ));
+        pan.connect_drag_end(glib::clone!(
+            #[weak(rename_to = z)]
+            self,
+            move |_, _, _| z.update_cursor()
+        ));
         self.scroller.add_controller(pan);
-
-        // Depois do zoom, o tamanho do conteúdo muda: mantém o ponto ancorado.
-        for horizontal in [true, false] {
-            let adj = if horizontal { self.scroller.hadjustment() } else { self.scroller.vadjustment() };
-            let z = Rc::downgrade(self);
-            adj.connect_upper_notify(move |adj| {
-                let Some(z) = z.upgrade() else { return };
-                if let Some(((fx, fy), (px, py))) = z.anchor.get() {
-                    let (f, p) = if horizontal { (fx, px) } else { (fy, py) };
-                    adj.set_value(f * adj.upper() - p);
-                }
-            });
-        }
     }
 
     fn update_cursor(&self) {
@@ -294,24 +359,11 @@ impl Zoom {
     fn set_zoom(self: &Rc<Self>, z: f64, at: Option<(f64, f64)>) {
         let z = z.clamp(1.0, MAX_ZOOM);
         let old = self.zoom.replace(z);
-        let (h, v) = (self.scroller.hadjustment(), self.scroller.vadjustment());
-        let (px, py) = at.unwrap_or((h.page_size() / 2.0, v.page_size() / 2.0));
-        let frac =
-            |adj: &gtk::Adjustment, p: f64| if adj.upper() > 0.0 { (adj.value() + p) / adj.upper() } else { 0.5 };
         if (old - z).abs() > 1e-9 {
-            self.anchor.set(Some(((frac(&h, px), frac(&v, py)), (px, py))));
-            // A âncora vale só para o próximo layout.
-            let a = Rc::downgrade(self);
-            glib::timeout_add_local_once(std::time::Duration::from_millis(150), move || {
-                if let Some(a) = a.upgrade() {
-                    a.anchor.set(None);
-                }
-            });
+            self.anchor.hold(&self.scroller, at);
         }
-        self.thumb.set_max((self.fit.0 as f64 * z) as i32, (self.fit.1 as f64 * z) as i32);
-        self.zoom_label.set_label(&zoom_label(z));
-        self.zoom_out.set_sensitive(z > 1.0);
-        self.zoom_in.set_sensitive(z < MAX_ZOOM);
+        self.thumb.set_max((f64::from(self.fit.0) * z) as i32, (f64::from(self.fit.1) * z) as i32);
+        self.controls.show(z, z > 1.0, z < MAX_ZOOM);
         self.update_cursor();
         self.sharpen_later();
     }

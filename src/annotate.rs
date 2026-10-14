@@ -113,7 +113,7 @@ pub fn validate(items: &[Annotation], total: u32) -> OpResult<()> {
             Kind::Image { path, .. } if !path.is_file() => {
                 return Err(OpError::InvalidRange(format!(
                     "A imagem “{}” não foi encontrada.",
-                    crate::error::display_name(path)
+                    crate::human::file_name(path)
                 )));
             }
             _ => {}

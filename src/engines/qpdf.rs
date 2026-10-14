@@ -17,7 +17,7 @@ const OK: &[i32] = &[0, 3];
 pub fn page_count(path: &Path, cancel: &CancelToken) -> OpResult<u32> {
     std::fs::File::open(path).map_err(|e| OpError::io_path("abrir", path, e))?;
     let out = run(Tool::Qpdf, [OsString::from("--show-npages"), path.into()], cancel)?;
-    if matches!(out.code, Some(0) | Some(3)) {
+    if matches!(out.code, Some(0 | 3)) {
         let text = String::from_utf8_lossy(&out.stdout);
         return text.trim().parse().map_err(|_| OpError::InvalidPdf {
             file: path.to_path_buf(),
@@ -97,7 +97,7 @@ pub fn optimize_lossless(input: &Path, out: &Path, cancel: &CancelToken) -> OpRe
 pub fn check(path: &Path, cancel: &CancelToken) -> OpResult<()> {
     let out = run(Tool::Qpdf, [OsString::from("--check"), path.into()], cancel)?;
     match out.code {
-        Some(0) | Some(3) => Ok(()),
+        Some(0 | 3) => Ok(()),
         _ => Err(OpError::OutputInvalid(format!(
             "qpdf --check falhou: {}",
             String::from_utf8_lossy(&out.stdout).lines().chain(out.stderr.lines()).last().unwrap_or("")
@@ -159,10 +159,15 @@ pub struct PasswordCheck {
     pub restricted: bool,
 }
 
-pub fn check_password(path: &Path, password_file: &Path, cancel: &CancelToken) -> OpResult<PasswordCheck> {
+/// `--password-file=<arquivo>`: a senha nunca vai para a linha de comando.
+fn password_arg(password_file: &Path) -> OsString {
     let mut arg = OsString::from("--password-file=");
     arg.push(password_file);
-    let out = run(Tool::Qpdf, [arg, "--show-encryption".into(), path.into()], cancel)?;
+    arg
+}
+
+pub fn check_password(path: &Path, password_file: &Path, cancel: &CancelToken) -> OpResult<PasswordCheck> {
+    let out = run(Tool::Qpdf, [password_arg(password_file), "--show-encryption".into(), path.into()], cancel)?;
     let text = String::from_utf8_lossy(&out.stdout);
     parse_password_check(&text, &out.stderr).ok_or_else(|| OpError::WrongPassword(path.to_path_buf()))
 }
@@ -182,17 +187,13 @@ fn parse_password_check(stdout: &str, stderr: &str) -> Option<PasswordCheck> {
 
 /// Grava uma cópia sem criptografia, abrindo com a senha do arquivo indicado.
 pub fn decrypt(input: &Path, password_file: &Path, out: &Path, cancel: &CancelToken) -> OpResult<()> {
-    let mut arg = OsString::from("--password-file=");
-    arg.push(password_file);
-    run_ok(Tool::Qpdf, [arg, "--decrypt".into(), input.into(), out.into()], OK, cancel)?;
+    run_ok(Tool::Qpdf, [password_arg(password_file), "--decrypt".into(), input.into(), out.into()], OK, cancel)?;
     Ok(())
 }
 
 /// Número de páginas abrindo com a senha do arquivo indicado.
 pub fn page_count_with_password(path: &Path, password_file: &Path, cancel: &CancelToken) -> OpResult<u32> {
-    let mut arg = OsString::from("--password-file=");
-    arg.push(password_file);
-    let out = run_ok(Tool::Qpdf, [arg, "--show-npages".into(), path.into()], OK, cancel)?;
+    let out = run_ok(Tool::Qpdf, [password_arg(password_file), "--show-npages".into(), path.into()], OK, cancel)?;
     String::from_utf8_lossy(&out.stdout)
         .trim()
         .parse()
@@ -216,16 +217,24 @@ pub fn strip_metadata(input: &Path, out: &Path, cancel: &CancelToken) -> OpResul
     Ok(())
 }
 
+/// Documento JSON v2 do qpdf só com `object` (`trailer` ou “4 0 R”).
+fn json_object(input: &Path, object: &str, cancel: &CancelToken) -> OpResult<serde_json::Value> {
+    let args: Vec<OsString> =
+        vec!["--json=2".into(), "--json-key=qpdf".into(), format!("--json-object={object}").into(), input.into()];
+    let out = run_ok(Tool::Qpdf, args, OK, cancel)?;
+    serde_json::from_slice(&out.stdout).map_err(|_| OpError::OutputInvalid("JSON do qpdf sem formato válido".into()))
+}
+
 /// Lê o trailer e o maior número de objeto, para montar uma atualização JSON.
 pub fn trailer(input: &Path, cancel: &CancelToken) -> OpResult<(serde_json::Value, u64)> {
-    let args: Vec<OsString> =
-        vec!["--json=2".into(), "--json-key=qpdf".into(), "--json-object=trailer".into(), input.into()];
-    let out = run_ok(Tool::Qpdf, args, OK, cancel)?;
+    let json = json_object(input, "trailer", cancel)?;
     let bad = |what: &str| OpError::OutputInvalid(format!("JSON do qpdf sem {what}"));
-    let json: serde_json::Value = serde_json::from_slice(&out.stdout).map_err(|_| bad("formato válido"))?;
     let qpdf = json.get("qpdf").and_then(|q| q.as_array()).ok_or_else(|| bad("a chave qpdf"))?;
-    let max =
-        qpdf.first().and_then(|h| h.get("maxobjectid")).and_then(|m| m.as_u64()).ok_or_else(|| bad("maxobjectid"))?;
+    let max = qpdf
+        .first()
+        .and_then(|h| h.get("maxobjectid"))
+        .and_then(serde_json::Value::as_u64)
+        .ok_or_else(|| bad("maxobjectid"))?;
     let trailer = qpdf
         .get(1)
         .and_then(|o| o.get("trailer"))
@@ -233,6 +242,16 @@ pub fn trailer(input: &Path, cancel: &CancelToken) -> OpResult<(serde_json::Valu
         .cloned()
         .ok_or_else(|| bad("trailer"))?;
     Ok((trailer, max))
+}
+
+/// Valor do objeto `id` (“4 0 R”) quando ele é um dicionário.
+pub fn dictionary(
+    input: &Path,
+    id: &str,
+    cancel: &CancelToken,
+) -> OpResult<Option<serde_json::Map<String, serde_json::Value>>> {
+    let json = json_object(input, id, cancel)?;
+    Ok(json["qpdf"][1][format!("obj:{id}")]["value"].as_object().cloned())
 }
 
 /// Aplica uma atualização no formato JSON v2 do qpdf.

@@ -24,6 +24,21 @@ impl ImageFormat {
     }
 }
 
+/// `-f first -l last`: o intervalo de páginas, como pdftoppm, pdfinfo e
+/// pdftotext esperam.
+fn page_range(first: u32, last: u32) -> [OsString; 4] {
+    ["-f".into(), first.to_string().into(), "-l".into(), last.to_string().into()]
+}
+
+/// O arquivo que o pdftoppm deveria ter criado para `page`.
+fn produced(path: PathBuf, page: u32) -> OpResult<PathBuf> {
+    if path.is_file() {
+        Ok(path)
+    } else {
+        Err(OpError::OutputInvalid(format!("o pdftoppm não gerou a página {page}")))
+    }
+}
+
 /// Renderiza uma única página para `out_base` + extensão (o pdftoppm acrescenta
 /// a extensão). Devolve o caminho criado.
 pub fn render_page(
@@ -35,8 +50,7 @@ pub fn render_page(
     out_base: &Path,
     cancel: &CancelToken,
 ) -> OpResult<PathBuf> {
-    let p = page.to_string();
-    let mut args: Vec<OsString> = vec!["-f".into(), p.clone().into(), "-l".into(), p.into()];
+    let mut args: Vec<OsString> = page_range(page, page).into();
     args.extend(["-r".into(), dpi.to_string().into(), "-singlefile".into()]);
     match format {
         ImageFormat::Png => args.push("-png".into()),
@@ -54,35 +68,17 @@ pub fn render_page(
     args.push(pdf.into());
     args.push(out_base.into());
     run_ok(Tool::Pdftoppm, args, &[0], cancel)?;
-    let produced = out_base.with_extension(format.extension());
-    if !produced.is_file() {
-        return Err(OpError::OutputInvalid(format!("o pdftoppm não gerou a página {page}")));
-    }
-    Ok(produced)
+    produced(out_base.with_extension(format.extension()), page)
 }
 
 /// Renderiza uma página em tons de cinza, sem compressão (PGM), para o OCR:
 /// bem mais rápido que PNG em digitalizações com ruído. Devolve o caminho.
 pub fn render_gray(pdf: &Path, page: u32, dpi: u32, out_base: &Path, cancel: &CancelToken) -> OpResult<PathBuf> {
-    let p = page.to_string();
-    let args: Vec<OsString> = vec![
-        "-f".into(),
-        p.clone().into(),
-        "-l".into(),
-        p.into(),
-        "-r".into(),
-        dpi.to_string().into(),
-        "-gray".into(),
-        "-singlefile".into(),
-        pdf.into(),
-        out_base.into(),
-    ];
+    let mut args: Vec<OsString> = page_range(page, page).into();
+    args.extend(["-r".into(), dpi.to_string().into(), "-gray".into(), "-singlefile".into(), pdf.into()]);
+    args.push(out_base.into());
     run_ok(Tool::Pdftoppm, args, &[0], cancel)?;
-    let produced = out_base.with_extension("pgm");
-    if !produced.is_file() {
-        return Err(OpError::OutputInvalid(format!("o pdftoppm não gerou a página {page}")));
-    }
-    Ok(produced)
+    produced(out_base.with_extension("pgm"), page)
 }
 
 /// Gera miniaturas PNG (lado maior = `size` px) das páginas `first..=last`
@@ -95,25 +91,15 @@ pub fn thumbnails(
     dir: &Path,
     cancel: &CancelToken,
 ) -> OpResult<Vec<PathBuf>> {
-    let prefix = dir.join(format!("t{first}"));
-    let args: Vec<OsString> = vec![
-        "-f".into(),
-        first.to_string().into(),
-        "-l".into(),
-        last.to_string().into(),
-        "-scale-to".into(),
-        size.to_string().into(),
-        "-png".into(),
-        pdf.into(),
-        prefix.clone().into(),
-    ];
+    let stem = format!("t{first}");
+    let mut args: Vec<OsString> = page_range(first, last).into();
+    args.extend(["-scale-to".into(), size.to_string().into(), "-png".into(), pdf.into(), dir.join(&stem).into()]);
     run_ok(Tool::Pdftoppm, args, &[0], cancel)?;
     // O pdftoppm numera como prefixo-N.png com zeros à esquerda conforme o
     // total de páginas do documento; aceitamos qualquer largura de padding.
-    let stem = prefix.file_name().unwrap().to_string_lossy().into_owned();
     let mut found: Vec<(u32, PathBuf)> = std::fs::read_dir(dir)
         .map_err(|e| OpError::io("ler miniaturas", e))?
-        .filter_map(|e| e.ok())
+        .filter_map(std::result::Result::ok)
         .filter_map(|e| {
             let name = e.file_name().to_string_lossy().into_owned();
             let n = name.strip_prefix(&stem)?.strip_prefix('-')?.strip_suffix(".png")?.parse().ok()?;
@@ -127,8 +113,8 @@ pub fn thumbnails(
 
 /// Tamanho exibido (pontos, rotação aplicada) de uma página, via `pdfinfo`.
 pub fn page_size(pdf: &Path, page: u32, cancel: &CancelToken) -> OpResult<(f32, f32)> {
-    let p = page.to_string();
-    let args: Vec<OsString> = vec!["-f".into(), p.clone().into(), "-l".into(), p.into(), pdf.into()];
+    let mut args: Vec<OsString> = page_range(page, page).into();
+    args.push(pdf.into());
     let out = run_ok(Tool::Pdfinfo, args, &[0], cancel)?;
     parse_page_size(&String::from_utf8_lossy(&out.stdout), page)
         .ok_or_else(|| OpError::OutputInvalid(format!("o pdfinfo não informou o tamanho da página {page}")))
@@ -136,7 +122,8 @@ pub fn page_size(pdf: &Path, page: u32, cancel: &CancelToken) -> OpResult<(f32, 
 
 /// Tamanho exibido de todas as páginas, em uma única chamada ao `pdfinfo`.
 pub fn page_sizes(pdf: &Path, total: u32, cancel: &CancelToken) -> OpResult<Vec<(f32, f32)>> {
-    let args: Vec<OsString> = vec!["-f".into(), "1".into(), "-l".into(), total.to_string().into(), pdf.into()];
+    let mut args: Vec<OsString> = page_range(1, total).into();
+    args.push(pdf.into());
     let out = run_ok(Tool::Pdfinfo, args, &[0], cancel)?;
     let text = String::from_utf8_lossy(&out.stdout);
     (1..=total)
@@ -162,9 +149,8 @@ pub fn extract_text(pdf: &Path, out: &Path, layout: bool, cancel: &CancelToken) 
 
 /// Texto de uma página (para pré-visualizar), via saída padrão.
 pub fn page_text(pdf: &Path, page: u32, layout: bool, cancel: &CancelToken) -> OpResult<String> {
-    let p = page.to_string();
-    let mut args: Vec<OsString> =
-        vec!["-enc".into(), "UTF-8".into(), "-f".into(), p.clone().into(), "-l".into(), p.into()];
+    let mut args: Vec<OsString> = vec!["-enc".into(), "UTF-8".into()];
+    args.extend(page_range(page, page));
     if layout {
         args.push("-layout".into());
     }
