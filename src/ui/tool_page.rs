@@ -1432,11 +1432,10 @@ impl ToolPage {
                 };
                 self.options_group.set_description(Some(&glib::markup_escape_text(&text)));
             }
-            Options::Ocr { .. } => {
+            Options::Ocr { skip, .. } => {
                 let text = match self.ocr_counts() {
                     Some((with_text, total)) => {
-                        let without = total - with_text;
-                        let mut t = ocr_summary(without, total);
+                        let mut t = ocr_summary(with_text, total, skip.is_active());
                         t.push_str(" Leva alguns segundos por página.");
                         t
                     }
@@ -2125,9 +2124,20 @@ impl ToolPage {
     }
 }
 
-/// “2 de 5 páginas não têm texto selecionável e serão reconhecidas.”
-fn ocr_summary(without: u32, total: u32) -> String {
-    match (without, total) {
+/// “2 de 5 páginas não têm texto selecionável e serão reconhecidas.” Sem
+/// `skip`, todas as páginas são reconhecidas, inclusive as que têm texto.
+fn ocr_summary(with_text: u32, total: u32, skip: bool) -> String {
+    if !skip && with_text > 0 {
+        return match (with_text, total) {
+            (1, 1) => "A página será reconhecida, embora já tenha texto selecionável.".into(),
+            (w, n) if w == n => {
+                format!("As {n} páginas serão reconhecidas, embora todas já tenham texto selecionável.")
+            }
+            (1, n) => format!("As {n} páginas serão reconhecidas, inclusive 1 que já tem texto selecionável."),
+            (w, n) => format!("As {n} páginas serão reconhecidas, inclusive {w} que já têm texto selecionável."),
+        };
+    }
+    match (total - with_text, total) {
         (0, 1) => "A página já tem texto selecionável.".into(),
         (0, n) => format!("Todas as {n} páginas já têm texto selecionável."),
         (1, 1) => "A página não tem texto selecionável e será reconhecida.".into(),
@@ -2229,10 +2239,23 @@ mod tests {
 
     #[test]
     fn ocr_summary_agrees_in_number() {
-        assert_eq!(ocr_summary(1, 3), "1 de 3 páginas não tem texto selecionável e será reconhecida.");
-        assert_eq!(ocr_summary(2, 3), "2 de 3 páginas não têm texto selecionável e serão reconhecidas.");
-        assert_eq!(ocr_summary(1, 1), "A página não tem texto selecionável e será reconhecida.");
-        assert_eq!(ocr_summary(0, 4), "Todas as 4 páginas já têm texto selecionável.");
+        assert_eq!(ocr_summary(2, 3, true), "1 de 3 páginas não tem texto selecionável e será reconhecida.");
+        assert_eq!(ocr_summary(1, 3, true), "2 de 3 páginas não têm texto selecionável e serão reconhecidas.");
+        assert_eq!(ocr_summary(0, 1, true), "A página não tem texto selecionável e será reconhecida.");
+        assert_eq!(ocr_summary(4, 4, true), "Todas as 4 páginas já têm texto selecionável.");
+    }
+
+    #[test]
+    fn ocr_summary_counts_every_page_when_not_skipping() {
+        assert_eq!(
+            ocr_summary(293, 308, false),
+            "As 308 páginas serão reconhecidas, inclusive 293 que já têm texto selecionável."
+        );
+        assert_eq!(
+            ocr_summary(1, 5, false),
+            "As 5 páginas serão reconhecidas, inclusive 1 que já tem texto selecionável."
+        );
+        assert_eq!(ocr_summary(0, 5, false), "Nenhuma das 5 páginas tem texto selecionável: todas serão reconhecidas.");
     }
 
     #[test]

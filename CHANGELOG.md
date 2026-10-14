@@ -1,5 +1,20 @@
 # Changelog
 
+## Não lançado
+
+### Corrigido
+- **“Sem texto selecionável” só aparece quando é verdade:** o aviso no cartão
+  do arquivo (e a sugestão de OCR na tela inicial) olhava só a primeira página,
+  então um livro com capa em imagem parecia digitalizado. Agora conta todas as
+  páginas: “sem texto selecionável” quando nenhuma tem texto, “texto
+  selecionável em só X de N páginas” quando a maioria não tem.
+- **OCR — contagem com “Pular páginas que já têm texto” desligado:** a
+  descrição continuava dizendo que só as páginas sem texto seriam
+  reconhecidas; agora diz que todas serão.
+- **PDF para texto — prévia:** mostra a primeira página que tem texto (não
+  mais sempre a página 1) e, quando nenhuma tem, indica a ferramenta de OCR em
+  vez de dizer que ela “chega numa próxima versão”.
+
 ## 0.4.0 — 2026-10-14
 
 ### Adicionado

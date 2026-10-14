@@ -78,9 +78,14 @@ fn has_text(page: &str) -> bool {
 /// Quantas páginas já têm texto selecionável, e o total (para a interface
 /// mostrar o que será reconhecido antes de executar).
 pub fn text_pages(pdf: &Path, cancel: &crate::jobs::CancelToken) -> OpResult<(u32, u32)> {
+    let flags = pages_with_text(pdf, cancel)?;
+    Ok((flags.iter().filter(|&&t| t).count() as u32, flags.len() as u32))
+}
+
+/// Para cada página (na ordem), se ela já tem texto selecionável.
+pub fn pages_with_text(pdf: &Path, cancel: &crate::jobs::CancelToken) -> OpResult<Vec<bool>> {
     let total = qpdf::page_count(pdf, cancel)?;
-    let texts = poppler::texts_per_page(pdf, total, cancel)?;
-    Ok((texts.iter().filter(|t| has_text(t)).count() as u32, total))
+    Ok(poppler::texts_per_page(pdf, total, cancel)?.iter().map(|t| has_text(t)).collect())
 }
 
 /// Páginas a reconhecer (1 = primeira).

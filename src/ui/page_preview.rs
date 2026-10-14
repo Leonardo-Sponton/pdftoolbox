@@ -681,7 +681,7 @@ impl TextPreview {
         };
         self.group.set_visible(true);
         self.group.set_description(Some(&glib::markup_escape_text(&format!(
-            "Página 1 de “{}”, como ficará no arquivo .txt.",
+            "Como o texto de “{}” ficará no arquivo .txt.",
             display_name(&path)
         ))));
         self.text.set_text("Lendo…");
@@ -689,13 +689,23 @@ impl TextPreview {
         self.note.set_visible(false);
         let this = Rc::downgrade(self);
         glib::spawn_future_local(async move {
-            let text = thumbs::page_text(&path, 1, layout).await;
+            let text = thumbs::first_text_page(&path, layout).await;
             let Some(me) = this.upgrade() else { return };
             if me.generation.get() != generation {
                 return;
             }
             match text {
-                Some(t) if !t.trim().is_empty() => {
+                Some(Some((page, t))) => {
+                    let start = match page {
+                        1 => String::new(),
+                        2 => " A página 1 não tem texto selecionável (capa ou imagem?).".into(),
+                        3 => " As páginas 1 e 2 não têm texto selecionável (capa ou imagens?).".into(),
+                        n => format!(" As páginas 1 a {} não têm texto selecionável (capa ou imagens?).", n - 1),
+                    };
+                    me.group.set_description(Some(&glib::markup_escape_text(&format!(
+                        "Página {page} de “{}”, como ficará no arquivo .txt.{start}",
+                        display_name(&path)
+                    ))));
                     const MAX_LINES: usize = 60;
                     let lines: Vec<&str> = t.trim_end().lines().collect();
                     let mut shown = lines.iter().take(MAX_LINES).copied().collect::<Vec<_>>().join("\n");
@@ -704,12 +714,12 @@ impl TextPreview {
                     }
                     me.text.set_text(&shown);
                 }
-                Some(_) => {
+                Some(None) => {
                     me.text.set_text("");
                     me.scroll.set_visible(false);
                     me.note.set_text(
-                        "A página 1 não tem texto selecionável — o PDF parece ser uma digitalização (imagem). \
-                         A extração só funcionará com OCR, que chega numa próxima versão.",
+                        "Nenhuma página tem texto selecionável — o PDF parece ser uma digitalização (imagem). \
+                         Use antes a ferramenta “OCR — reconhecer texto” e extraia o texto do PDF que ela criar.",
                     );
                     me.note.set_visible(true);
                 }

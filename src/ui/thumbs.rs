@@ -152,11 +152,18 @@ pub struct FileFacts {
     pub problem: Option<String>,
     /// PDF que exige senha para abrir (só “Remover senha” o aceita).
     pub locked: bool,
-    /// PDF sem texto selecionável na primeira página: provável digitalização.
-    pub no_text: bool,
+    /// PDFs: páginas com texto selecionável e total (`None` se não deu para ler).
+    pub text_pages: Option<(u32, u32)>,
 }
 
 impl FileFacts {
+    /// Mais da metade das páginas sem texto selecionável: provável
+    /// digitalização, que só o OCR torna pesquisável. Uma capa ou ilustração
+    /// sem texto num livro digital não conta.
+    pub fn mostly_scanned(&self) -> bool {
+        self.text_pages.is_some_and(|(with, total)| total > 0 && with * 2 < total)
+    }
+
     /// Linha curta: “308 páginas · 6,5 MB” ou “1920 × 1080 px · 2 MB”.
     pub fn line(&self, is_pdf: bool) -> String {
         let size = self.size.map(human_size);
@@ -181,8 +188,12 @@ impl FileFacts {
             parts.push(format!("{} × {} px", w as u32, h as u32));
         }
         parts.extend(size);
-        if self.no_text {
-            parts.push("sem texto selecionável".into());
+        match self.text_pages {
+            Some((0, total)) if total > 0 => parts.push("sem texto selecionável".into()),
+            Some((with, total)) if self.mostly_scanned() => {
+                parts.push(format!("texto selecionável em só {with} de {total} páginas"))
+            }
+            _ => {}
         }
         parts.join(" · ")
     }
@@ -208,8 +219,7 @@ pub fn facts_blocking(path: &Path) -> FileFacts {
         }
         if facts.problem.is_none() && !facts.locked {
             facts.dims = poppler::page_size(path, 1, &cancel).ok();
-            facts.no_text =
-                poppler::page_text(path, 1, false, &cancel).is_ok_and(|t| !t.chars().any(char::is_alphanumeric));
+            facts.text_pages = pdftoolbox::operations::text_pages(path, &cancel).ok();
         }
     } else if is_office(path) {
         // Só o tamanho: ler páginas exigiria converter o documento.
@@ -312,8 +322,16 @@ pub fn blank_texture(w: u32, h: u32) -> gdk::Texture {
     Pixels { width: w, height: h, data: vec![255; (w * h * 4) as usize] }.texture()
 }
 
-/// Texto da página `page` (pré-visualização da extração).
-pub async fn page_text(path: &Path, page: u32, layout: bool) -> Option<String> {
+/// Primeira página com texto selecionável e o texto dela (pré-visualização da
+/// extração). `Some(None)`: nenhuma página tem texto; `None`: não deu para ler.
+pub async fn first_text_page(path: &Path, layout: bool) -> Option<Option<(u32, String)>> {
     let p = path.to_path_buf();
-    widgets::blocking(move || poppler::page_text(&p, page, layout, &CancelToken::new()).ok()).await
+    widgets::blocking(move || {
+        let cancel = CancelToken::new();
+        let flags = pdftoolbox::operations::pages_with_text(&p, &cancel).ok()?;
+        let Some(i) = flags.iter().position(|&t| t) else { return Some(None) };
+        let page = i as u32 + 1;
+        poppler::page_text(&p, page, layout, &cancel).ok().map(|t| Some((page, t)))
+    })
+    .await
 }

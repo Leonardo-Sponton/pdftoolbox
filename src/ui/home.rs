@@ -26,7 +26,7 @@ pub struct Home {
     staged: RefCell<Vec<PathBuf>>,
     /// PDFs escolhidos que exigem senha (descobertos ao ler os arquivos).
     locked: RefCell<Vec<PathBuf>>,
-    /// PDFs sem texto selecionável na primeira página (digitalizações).
+    /// PDFs com a maior parte das páginas sem texto selecionável (digitalizações).
     scanned: RefCell<Vec<PathBuf>>,
     recent_box: gtk::FlowBox,
     recent_section: gtk::Box,
@@ -573,7 +573,7 @@ impl Home {
                     c.add_css_class("problema");
                 }
             }
-            if (info.locked || info.no_text)
+            if (info.locked || info.mostly_scanned())
                 && let Some(h) = h.upgrade()
                 && h.staged.borrow().contains(&p)
             {

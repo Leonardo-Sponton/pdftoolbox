@@ -19,7 +19,7 @@ pub use crate::stamp::{NumberFormat, NumberStyle, Position, WatermarkStyle};
 pub use compress::{CUSTOM_DPI, CompressLevel, Estimate, estimate as estimate_compression};
 pub use convert::OFFICE_EXTENSIONS;
 pub use edit::{DocFields, MetadataChange, unsupported_chars};
-pub use ocr::{OcrLanguage, OcrOptions, text_pages};
+pub use ocr::{OcrLanguage, OcrOptions, pages_with_text, text_pages};
 pub use organize::PageItem;
 pub use security::Restrictions;
 
