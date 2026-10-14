@@ -5,13 +5,14 @@
 - Rust estável ≥ 1.85 (edição 2024). Testado com 1.99.
 - GTK ≥ 4.12 e libadwaita ≥ 1.5 com cabeçalhos.
 - qpdf, Poppler (pdftoppm, pdfinfo, pdftotext) e, para testar a compressão
-  com perda, Ghostscript.
+  com perda, Ghostscript. Os testes de OCR precisam do Tesseract com `por` e
+  `eng`; sem eles, são ignorados (com aviso).
 
 ```sh
 # Debian/Ubuntu
-sudo apt install cargo libgtk-4-dev libadwaita-1-dev qpdf poppler-utils ghostscript
+sudo apt install cargo libgtk-4-dev libadwaita-1-dev qpdf poppler-utils ghostscript tesseract-ocr tesseract-ocr-por
 # Arch
-sudo pacman -S rust gtk4 libadwaita qpdf poppler ghostscript
+sudo pacman -S rust gtk4 libadwaita qpdf poppler ghostscript tesseract tesseract-data-por tesseract-data-eng
 ```
 
 ## Antes de enviar uma mudança

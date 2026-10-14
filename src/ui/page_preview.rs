@@ -156,6 +156,11 @@ impl PagePreview {
         self.total.get()
     }
 
+    /// Arquivo mostrado na grade.
+    pub fn current(&self) -> Option<PathBuf> {
+        self.path.borrow().clone()
+    }
+
     /// Arquivos disponíveis; mantém o arquivo mostrado se ele continuar na lista.
     pub fn set_files(self: &Rc<Self>, files: &[PathBuf]) {
         *self.files.borrow_mut() = files.to_vec();
@@ -198,6 +203,15 @@ impl PagePreview {
             let facts = thumbs::facts(&path).await;
             let Some(p) = weak.upgrade() else { return };
             if p.generation.get() != generation {
+                return;
+            }
+            if facts.locked {
+                p.set_cells(0);
+                p.show_message(Some(
+                    "🔒 Este PDF está protegido por senha, então as páginas não podem ser mostradas. \
+                     Use “Remover senha” com a senha do documento e abra a cópia desbloqueada.",
+                ));
+                p.notify_loaded();
                 return;
             }
             let total = match (facts.problem, facts.pages) {
@@ -475,4 +489,180 @@ fn sheet(n: usize, path: &Path, dims: Option<(f32, f32)>, layout: ImageLayout) -
     child.set_child(Some(&b));
     child.set_focusable(false);
     child.upcast()
+}
+
+/// “Como vai ficar”: uma página renderizada com o carimbo aplicado pelas
+/// mesmas funções da operação. Atualiza com atraso curto enquanto o usuário
+/// digita, e descarta resultados que chegam fora de ordem.
+pub struct StampPreview {
+    pub group: adw::PreferencesGroup,
+    thumb: PageThumb,
+    caption: gtk::Label,
+    spinner: gtk::Spinner,
+    generation: Cell<u64>,
+    timer: RefCell<Option<glib::SourceId>>,
+}
+
+type LayerFn = Box<dyn FnOnce((f32, f32)) -> pdfwriter::OverlayPage + Send>;
+
+impl StampPreview {
+    pub fn new() -> Rc<StampPreview> {
+        let thumb = PageThumb::new(300, 380);
+        thumb.set_margin_top(12);
+        thumb.set_margin_bottom(4);
+        let spinner = gtk::Spinner::builder().halign(gtk::Align::Center).valign(gtk::Align::Center).build();
+        let overlay = gtk::Overlay::builder().child(&thumb).build();
+        overlay.add_overlay(&spinner);
+        let caption = gtk::Label::builder().wrap(true).justify(gtk::Justification::Center).build();
+        caption.add_css_class("pv-legenda");
+        let inner = gtk::Box::new(gtk::Orientation::Vertical, 8);
+        inner.append(&overlay);
+        inner.append(&caption);
+        let group = adw::PreferencesGroup::builder()
+            .title("Como vai ficar")
+            .description("A página é renderizada com o resultado real, antes de salvar.")
+            .build();
+        group.add(&inner);
+        group.set_visible(false);
+        Rc::new(StampPreview { group, thumb, caption, spinner, generation: Cell::new(0), timer: RefCell::new(None) })
+    }
+
+    pub fn hide(&self) {
+        self.generation.set(self.generation.get() + 1);
+        if let Some(t) = self.timer.borrow_mut().take() {
+            t.remove();
+        }
+        self.group.set_visible(false);
+    }
+
+    /// Mostra `page` de `path` com a camada que `layer` produzir.
+    pub fn show(self: &Rc<Self>, path: &Path, page: u32, caption: &str, layer: LayerFn) {
+        self.group.set_visible(true);
+        self.caption.set_text(caption);
+        let generation = self.generation.get() + 1;
+        self.generation.set(generation);
+        if let Some(t) = self.timer.borrow_mut().take() {
+            t.remove();
+        }
+        self.spinner.set_visible(true);
+        self.spinner.start();
+        let this = Rc::downgrade(self);
+        let path = path.to_path_buf();
+        let mut layer = Some(layer);
+        let id = glib::timeout_add_local_once(std::time::Duration::from_millis(220), move || {
+            let Some(me) = this.upgrade() else { return };
+            me.timer.borrow_mut().take();
+            let Some(layer) = layer.take() else { return };
+            let this = Rc::downgrade(&me);
+            glib::spawn_future_local(async move {
+                let texture = thumbs::stamped_page(&path, page, layer, 760).await;
+                let Some(me) = this.upgrade() else { return };
+                if me.generation.get() != generation {
+                    return;
+                }
+                me.spinner.stop();
+                me.spinner.set_visible(false);
+                match texture {
+                    Some(t) => me.thumb.set_texture(Some(&t)),
+                    None => me.caption.set_text("Não foi possível gerar a prévia desta página."),
+                }
+            });
+        });
+        *self.timer.borrow_mut() = Some(id);
+    }
+}
+
+/// Prévia do texto extraído da primeira página.
+pub struct TextPreview {
+    pub group: adw::PreferencesGroup,
+    text: gtk::Label,
+    scroll: gtk::ScrolledWindow,
+    note: gtk::Label,
+    generation: Cell<u64>,
+}
+
+impl TextPreview {
+    pub fn new() -> Rc<TextPreview> {
+        let text = gtk::Label::builder()
+            .xalign(0.0)
+            .yalign(0.0)
+            .selectable(true)
+            .wrap(true)
+            .wrap_mode(gtk::pango::WrapMode::WordChar)
+            .margin_top(10)
+            .margin_bottom(10)
+            .margin_start(12)
+            .margin_end(12)
+            .build();
+        text.add_css_class("monospace");
+        text.add_css_class("caption");
+        let scroll = gtk::ScrolledWindow::builder()
+            .hscrollbar_policy(gtk::PolicyType::Never)
+            .min_content_height(120)
+            .max_content_height(280)
+            .propagate_natural_height(true)
+            .child(&text)
+            .build();
+        scroll.add_css_class("card");
+        let note = gtk::Label::builder().wrap(true).xalign(0.0).visible(false).build();
+        note.add_css_class("texto-aviso");
+        let inner = gtk::Box::new(gtk::Orientation::Vertical, 8);
+        inner.append(&note);
+        inner.append(&scroll);
+        let group = adw::PreferencesGroup::builder().title("Prévia do texto").build();
+        group.add(&inner);
+        group.set_visible(false);
+        Rc::new(TextPreview { group, text, scroll, note, generation: Cell::new(0) })
+    }
+
+    pub fn update(self: &Rc<Self>, path: Option<&Path>, layout: bool) {
+        let generation = self.generation.get() + 1;
+        self.generation.set(generation);
+        let Some(path) = path.map(Path::to_path_buf) else {
+            self.group.set_visible(false);
+            return;
+        };
+        self.group.set_visible(true);
+        self.group.set_description(Some(&glib::markup_escape_text(&format!(
+            "Página 1 de “{}”, como ficará no arquivo .txt.",
+            display_name(&path)
+        ))));
+        self.text.set_text("Lendo…");
+        self.scroll.set_visible(true);
+        self.note.set_visible(false);
+        let this = Rc::downgrade(self);
+        glib::spawn_future_local(async move {
+            let text = thumbs::page_text(&path, 1, layout).await;
+            let Some(me) = this.upgrade() else { return };
+            if me.generation.get() != generation {
+                return;
+            }
+            match text {
+                Some(t) if !t.trim().is_empty() => {
+                    const MAX_LINES: usize = 60;
+                    let lines: Vec<&str> = t.trim_end().lines().collect();
+                    let mut shown = lines.iter().take(MAX_LINES).copied().collect::<Vec<_>>().join("\n");
+                    if lines.len() > MAX_LINES {
+                        shown.push_str(&format!("\n… (mais {} linhas)", lines.len() - MAX_LINES));
+                    }
+                    me.text.set_text(&shown);
+                }
+                Some(_) => {
+                    me.text.set_text("");
+                    me.scroll.set_visible(false);
+                    me.note.set_text(
+                        "A página 1 não tem texto selecionável — o PDF parece ser uma digitalização (imagem). \
+                         A extração só funcionará com OCR, que chega numa próxima versão.",
+                    );
+                    me.note.set_visible(true);
+                }
+                None => {
+                    me.text.set_text("");
+                    me.scroll.set_visible(false);
+                    me.note.set_text("Não foi possível ler o texto deste arquivo (protegido por senha ou danificado).");
+                    me.note.set_visible(true);
+                }
+            }
+        });
+    }
 }

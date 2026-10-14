@@ -106,6 +106,20 @@ pub fn cleanup_stale_jobs() {
     }
 }
 
+/// Grava um arquivo legível só pelo usuário (0600). Usado para entregar senhas
+/// ao qpdf dentro da pasta da tarefa, que é apagada ao fim.
+pub fn write_private(path: &Path, data: &[u8]) -> OpResult<()> {
+    use std::io::Write;
+    use std::os::unix::fs::OpenOptionsExt;
+    let mut f = fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .mode(0o600)
+        .open(path)
+        .map_err(|e| OpError::io("criar arquivo temporário", e))?;
+    f.write_all(data).map_err(|e| OpError::io("gravar arquivo temporário", e))
+}
+
 /// Torna um nome digitado pelo usuário seguro como nome de arquivo e garante a extensão.
 pub fn sanitize_file_name(name: &str, extension: &str) -> String {
     let cleaned: String = name.chars().map(|c| if c == '/' || c == '\0' || c.is_control() { '_' } else { c }).collect();

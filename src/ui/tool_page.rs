@@ -11,29 +11,113 @@ use gtk::{gio, glib};
 
 use pdftoolbox::catalog::{self, Accepts, ToolId, ToolInfo};
 use pdftoolbox::engines::Tool;
+use pdftoolbox::engines::poppler;
 use pdftoolbox::error::display_name;
 use pdftoolbox::jobs::{self, CancelToken, JobEvent};
 use pdftoolbox::operations::{
-    self, CompressLevel, Destination, ImageFormat, ImageLayout, Outcome, PageSize, Request, SplitMode, human_size,
+    self, CompressLevel, Destination, DocFields, ImageFormat, ImageLayout, MetadataChange, NumberFormat, NumberStyle,
+    OcrLanguage, OcrOptions, Outcome, PageSize, Position, Request, Restrictions, Secret, SplitMode, WatermarkStyle,
+    human_size, unsupported_chars,
 };
 use pdftoolbox::preview::Plan;
-use pdftoolbox::{OpError, OpResult, pages};
+use pdftoolbox::{OpError, OpResult, pages, stamp};
 
 use pdftoolbox::preview;
 
-use super::page_preview::{LayoutPreview, PagePreview};
+use super::page_preview::{LayoutPreview, PagePreview, StampPreview, TextPreview};
 use super::thumbs::{self, FileFacts};
 use super::{AppState, primary_menu, widgets};
 
 enum Options {
     None,
-    Split { mode: adw::ComboRow, ranges: adw::EntryRow, every: adw::SpinRow },
-    Extract { spec: adw::EntryRow, separate: adw::SwitchRow },
-    Remove { spec: adw::EntryRow },
-    Rotate { angle: adw::ComboRow, spec: adw::EntryRow },
-    Images { size: adw::ComboRow, margin: adw::SpinRow, one_file: adw::SwitchRow },
-    ToImages { format: adw::ComboRow, dpi: adw::SpinRow, quality: adw::SpinRow },
-    Compress { level: adw::ComboRow },
+    Split {
+        mode: adw::ComboRow,
+        ranges: adw::EntryRow,
+        every: adw::SpinRow,
+    },
+    Extract {
+        spec: adw::EntryRow,
+        separate: adw::SwitchRow,
+    },
+    Remove {
+        spec: adw::EntryRow,
+    },
+    Rotate {
+        angle: adw::ComboRow,
+        spec: adw::EntryRow,
+    },
+    Images {
+        size: adw::ComboRow,
+        margin: adw::SpinRow,
+        one_file: adw::SwitchRow,
+    },
+    ToImages {
+        format: adw::ComboRow,
+        dpi: adw::SpinRow,
+        quality: adw::SpinRow,
+    },
+    Compress {
+        level: adw::ComboRow,
+    },
+    Numbers {
+        position: adw::ComboRow,
+        format: adw::ComboRow,
+        first: adw::SpinRow,
+        size: adw::SpinRow,
+        spec: adw::EntryRow,
+    },
+    Watermark {
+        text: adw::EntryRow,
+        color: adw::ComboRow,
+        opacity: adw::SpinRow,
+        scale: adw::SpinRow,
+        diagonal: adw::SwitchRow,
+        spec: adw::EntryRow,
+    },
+    Metadata(Box<MetadataRows>),
+    Protect(Box<ProtectRows>),
+    Unlock {
+        password: adw::PasswordEntryRow,
+    },
+    Text {
+        layout: adw::SwitchRow,
+    },
+    Office,
+    Ocr {
+        language: adw::ComboRow,
+        skip: adw::SwitchRow,
+        straighten: adw::SwitchRow,
+    },
+}
+
+/// Por que o formulário ainda não pode ser executado.
+enum FormIssue {
+    /// Falta preencher algo (aviso discreto; vazio = sem mensagem).
+    Incomplete(String),
+    /// Há um valor errado (mensagem em vermelho).
+    Invalid(String),
+}
+
+struct MetadataRows {
+    title: adw::EntryRow,
+    author: adw::EntryRow,
+    subject: adw::EntryRow,
+    keywords: adw::EntryRow,
+    remove_all: adw::SwitchRow,
+    /// Somente leitura: programa de criação, produtor e datas.
+    facts: [adw::ActionRow; 4],
+    /// Arquivo cujos metadados preencheram os campos.
+    loaded: RefCell<Option<PathBuf>>,
+}
+
+struct ProtectRows {
+    password: adw::PasswordEntryRow,
+    confirm: adw::PasswordEntryRow,
+    restrict: adw::ExpanderRow,
+    owner: adw::PasswordEntryRow,
+    print: adw::SwitchRow,
+    copy: adw::SwitchRow,
+    edit: adw::SwitchRow,
 }
 
 pub struct ToolPage {
@@ -48,6 +132,10 @@ pub struct ToolPage {
     options_group: adw::PreferencesGroup,
     preview: Option<Rc<PagePreview>>,
     layout: Option<LayoutPreview>,
+    stamp_preview: Option<Rc<StampPreview>>,
+    text_preview: Option<Rc<TextPreview>>,
+    /// Aviso de validação do formulário, logo abaixo das opções.
+    form_hint: gtk::Label,
     plan_ok: Cell<bool>,
     /// Verdadeiro enquanto um clique na grade reescreve o campo de páginas.
     from_click: Cell<bool>,
@@ -64,6 +152,8 @@ pub struct ToolPage {
     scroll: gtk::ScrolledWindow,
     running: RefCell<Option<CancelToken>>,
     deps_ok: bool,
+    /// OCR: páginas com texto e total, por arquivo (`None` = lendo).
+    text_pages: RefCell<HashMap<PathBuf, Option<(u32, u32)>>>,
 }
 
 fn combo(title: &str, items: &[&str], selected: u32) -> adw::ComboRow {
@@ -93,8 +183,96 @@ fn run_label(id: ToolId) -> &'static str {
         ToolId::Rotate => "Girar",
         ToolId::ImagesToPdf | ToolId::PdfToImages => "Converter",
         ToolId::Compress => "Comprimir",
-        ToolId::Organize => "Salvar",
+        ToolId::Organize | ToolId::Annotate => "Salvar",
+        ToolId::NumberPages => "Numerar",
+        ToolId::Watermark => "Aplicar marca d’água",
+        ToolId::Metadata => "Salvar metadados",
+        ToolId::Protect => "Proteger",
+        ToolId::Unlock => "Remover senha",
+        ToolId::PdfToText => "Extrair texto",
+        ToolId::OfficeToPdf => "Converter",
+        ToolId::Ocr => "Reconhecer texto",
     }
+}
+
+fn switch(title: &str, subtitle: &str, active: bool) -> adw::SwitchRow {
+    adw::SwitchRow::builder().title(title).subtitle(subtitle).active(active).build()
+}
+
+fn password(title: &str) -> adw::PasswordEntryRow {
+    adw::PasswordEntryRow::builder().title(title).build()
+}
+
+fn info_row(title: &str) -> adw::ActionRow {
+    let row = widgets::plain_row(title, "—");
+    row.set_subtitle_selectable(true);
+    row.add_css_class("property");
+    row
+}
+
+const POSITIONS: [Position; 6] = [
+    Position::BottomRight,
+    Position::BottomCenter,
+    Position::BottomLeft,
+    Position::TopRight,
+    Position::TopCenter,
+    Position::TopLeft,
+];
+const FORMATS: [NumberFormat; 3] = [NumberFormat::Number, NumberFormat::NumberOfTotal, NumberFormat::PageOfTotal];
+const COLORS: [(f32, f32, f32); 4] = [(0.45, 0.45, 0.45), (0.78, 0.12, 0.12), (0.1, 0.3, 0.78), (0.0, 0.0, 0.0)];
+
+fn number_style(
+    position: &adw::ComboRow,
+    format: &adw::ComboRow,
+    first: &adw::SpinRow,
+    size: &adw::SpinRow,
+) -> NumberStyle {
+    NumberStyle {
+        position: POSITIONS[(position.selected() as usize).min(5)],
+        format: FORMATS[(format.selected() as usize).min(2)],
+        first_number: first.value() as u32,
+        size: size.value() as f32,
+        margin_mm: 10.0,
+    }
+}
+
+fn watermark_style(
+    text: &adw::EntryRow,
+    color: &adw::ComboRow,
+    opacity: &adw::SpinRow,
+    scale: &adw::SpinRow,
+    diagonal: &adw::SwitchRow,
+) -> WatermarkStyle {
+    WatermarkStyle {
+        text: text.text().trim().to_string(),
+        scale: scale.value() as f32 / 100.0,
+        opacity: opacity.value() as f32 / 100.0,
+        diagonal: diagonal.is_active(),
+        color: COLORS[(color.selected() as usize).min(3)],
+    }
+}
+
+/// “2026-10-14T09:59:35-03” → “14/10/2026, 09:59”. Formatos inesperados
+/// são mostrados como vieram.
+fn friendly_date(iso: &str) -> String {
+    let b = iso.as_bytes();
+    let digits = |r: std::ops::Range<usize>| b.get(r.clone()).is_some_and(|s| s.iter().all(u8::is_ascii_digit));
+    if b.len() >= 16
+        && digits(0..4)
+        && digits(5..7)
+        && digits(8..10)
+        && b[10] == b'T'
+        && digits(11..13)
+        && digits(14..16)
+    {
+        format!("{}/{}/{}, {}", &iso[8..10], &iso[5..7], &iso[0..4], &iso[11..16])
+    } else {
+        iso.to_string()
+    }
+}
+
+fn spec_text(row: &adw::EntryRow) -> Option<String> {
+    Some(row.text().trim().to_string()).filter(|s| !s.is_empty())
 }
 
 fn compress_explanation(level: CompressLevel) -> String {
@@ -220,7 +398,183 @@ fn build_options(info: &ToolInfo, group: &adw::PreferencesGroup) -> Options {
             group.add(&level);
             Options::Compress { level }
         }
-        ToolId::Organize => Options::None,
+        ToolId::Organize | ToolId::Annotate => Options::None,
+        ToolId::NumberPages => {
+            let position = combo(
+                "Posição",
+                &[
+                    "Embaixo, à direita",
+                    "Embaixo, no centro",
+                    "Embaixo, à esquerda",
+                    "Em cima, à direita",
+                    "Em cima, no centro",
+                    "Em cima, à esquerda",
+                ],
+                1,
+            );
+            let format = combo("Formato", &["1, 2, 3…", "1 / 10", "Página 1 de 10"], 0);
+            let first = spin("Começar em", "Número mostrado na primeira página numerada", 0.0, 99_999.0, 1.0, 1.0);
+            let size = spin("Tamanho do texto", "Em pontos", 6.0, 36.0, 1.0, 11.0);
+            let spec = entry("Páginas a numerar (vazio = todas; “2-” pula a capa)");
+            group.set_description(Some(
+                "O número é desenhado sobre a página, a 1 cm da borda; o conteúdo original não é alterado nem \
+                 convertido em imagem.",
+            ));
+            for row in [
+                position.upcast_ref::<gtk::Widget>(),
+                format.upcast_ref(),
+                first.upcast_ref(),
+                size.upcast_ref(),
+                spec.upcast_ref(),
+            ] {
+                group.add(row);
+            }
+            Options::Numbers { position, format, first, size, spec }
+        }
+        ToolId::Watermark => {
+            let text = entry("Texto da marca d’água");
+            text.set_text("CONFIDENCIAL");
+            let color = combo("Cor", &["Cinza", "Vermelho", "Azul", "Preto"], 0);
+            let opacity = spin("Opacidade", "Em %: quanto menor, mais transparente", 5.0, 100.0, 5.0, 30.0);
+            let scale = spin("Tamanho", "Em % da diagonal da página", 10.0, 100.0, 5.0, 60.0);
+            let diagonal = switch("Na diagonal", "Desligado: na horizontal, no centro da página", true);
+            let sc = scale.clone();
+            diagonal.connect_active_notify(move |d| {
+                sc.set_subtitle(if d.is_active() {
+                    "Em % da diagonal da página"
+                } else {
+                    "Em % da largura da página"
+                })
+            });
+            let spec = entry("Páginas (deixe vazio para todas)");
+            for row in [
+                text.upcast_ref::<gtk::Widget>(),
+                color.upcast_ref(),
+                opacity.upcast_ref(),
+                scale.upcast_ref(),
+                diagonal.upcast_ref(),
+                spec.upcast_ref(),
+            ] {
+                group.add(row);
+            }
+            Options::Watermark { text, color, opacity, scale, diagonal, spec }
+        }
+        ToolId::Metadata => {
+            let title = entry("Título");
+            let author = entry("Autor");
+            let subject = entry("Assunto");
+            let keywords = entry("Palavras-chave");
+            let remove_all = switch(
+                "Apagar todos os metadados",
+                "Remove também programas e datas — útil antes de compartilhar o arquivo",
+                false,
+            );
+            let facts =
+                [info_row("Criado com"), info_row("Gerado por"), info_row("Criado em"), info_row("Modificado em")];
+            group.set_description(Some("Campos deixados em branco são removidos do arquivo."));
+            for row in
+                [title.upcast_ref::<gtk::Widget>(), author.upcast_ref(), subject.upcast_ref(), keywords.upcast_ref()]
+            {
+                group.add(row);
+            }
+            for row in &facts {
+                group.add(row);
+            }
+            group.add(&remove_all);
+            let edits = [title.clone(), author.clone(), subject.clone(), keywords.clone()];
+            remove_all.connect_active_notify(move |r| {
+                for e in &edits {
+                    e.set_sensitive(!r.is_active());
+                }
+            });
+            Options::Metadata(Box::new(MetadataRows {
+                title,
+                author,
+                subject,
+                keywords,
+                remove_all,
+                facts,
+                loaded: RefCell::new(None),
+            }))
+        }
+        ToolId::Protect => {
+            let password_row = password("Senha para abrir");
+            let confirm = password("Repita a senha");
+            let restrict = adw::ExpanderRow::builder()
+                .title("Restringir impressão, cópia e edição")
+                .subtitle("Exige uma segunda senha, só para mudar as permissões")
+                .show_enable_switch(true)
+                .enable_expansion(false)
+                .build();
+            let owner = password("Senha de permissões");
+            let print = switch("Permitir imprimir", "", false);
+            let copy = switch("Permitir copiar texto e imagens", "", false);
+            let edit = switch("Permitir editar", "Inclui anotações e formulários", false);
+            restrict.add_row(&owner);
+            restrict.add_row(&print);
+            restrict.add_row(&copy);
+            restrict.add_row(&edit);
+            group.set_description(Some(
+                "Criptografia AES-256. Guarde a senha: sem ela, ninguém consegue abrir o arquivo — nem este \
+                 aplicativo. O original continua sem senha.",
+            ));
+            group.add(&password_row);
+            group.add(&confirm);
+            group.add(&restrict);
+            Options::Protect(Box::new(ProtectRows {
+                password: password_row,
+                confirm,
+                restrict,
+                owner,
+                print,
+                copy,
+                edit,
+            }))
+        }
+        ToolId::Unlock => {
+            let password_row = password("Senha do documento");
+            group.set_description(Some(
+                "Informe a senha que você já conhece. Para remover restrições de impressão ou cópia, é preciso a \
+                 senha de permissões (do proprietário). Nenhuma senha é adivinhada ou contornada.",
+            ));
+            group.add(&password_row);
+            Options::Unlock { password: password_row }
+        }
+        ToolId::PdfToText => {
+            let layout =
+                switch("Manter o layout", "Preserva colunas e espaçamento; desligado, segue a ordem de leitura", false);
+            group.set_description(Some(
+                "Só o texto selecionável é extraído. Para digitalizações (imagens), use antes a ferramenta \
+                 “OCR — reconhecer texto”.",
+            ));
+            group.add(&layout);
+            Options::Text { layout }
+        }
+        ToolId::Ocr => {
+            let language = combo("Idioma do documento", &["Português e inglês", "Português", "Inglês"], 0);
+            let skip = switch("Pular páginas que já têm texto", "Evita texto duplicado na busca e na cópia", true);
+            let straighten = switch(
+                "Endireitar páginas deitadas ou de cabeça para baixo",
+                "Gira a página inteira, sem perda, quando o texto está de lado",
+                true,
+            );
+            group.add(&language);
+            group.add(&skip);
+            group.add(&straighten);
+            Options::Ocr { language, skip, straighten }
+        }
+        ToolId::OfficeToPdf => {
+            let isolated = if pdftoolbox::engines::network_isolation_available() {
+                "A conversão roda isolada da rede."
+            } else {
+                "Neste sistema, a conversão não pode ser isolada da rede."
+            };
+            group.set_description(Some(&format!(
+                "Word, Excel, PowerPoint, LibreOffice, RTF, CSV e TXT, convertidos pelo LibreOffice instalado. \
+                 Macros não são executadas. {isolated} A primeira conversão pode levar alguns segundos."
+            )));
+            Options::Office
+        }
     }
 }
 
@@ -275,6 +629,7 @@ pub fn build(app: &Rc<AppState>, info: &'static ToolInfo, files: Vec<PathBuf>) -
         match info.accepts {
             Accepts::Pdf => "Arraste PDFs para esta janela ou clique em Adicionar",
             Accepts::Images => "Arraste imagens para esta janela ou clique em Adicionar",
+            Accepts::Office => "Arraste documentos, planilhas ou apresentações para esta janela",
         },
     );
     empty_row.add_css_class("dim-label");
@@ -287,10 +642,23 @@ pub fn build(app: &Rc<AppState>, info: &'static ToolInfo, files: Vec<PathBuf>) -
     if !matches!(options, Options::None) || options_group.description().is_some() {
         body.append(&options_group);
     }
+    let form_hint = gtk::Label::builder().wrap(true).xalign(0.0).visible(false).build();
+    form_hint.set_accessible_role(gtk::AccessibleRole::Status);
+    body.append(&form_hint);
+    let stamp_preview = matches!(info.id, ToolId::NumberPages | ToolId::Watermark).then(StampPreview::new);
+    if let Some(s) = &stamp_preview {
+        body.append(&s.group);
+    }
+    let text_preview = (info.id == ToolId::PdfToText).then(TextPreview::new);
+    if let Some(t) = &text_preview {
+        body.append(&t.group);
+    }
 
     // Pré-visualização
     let preview = match info.id {
-        ToolId::Rotate | ToolId::Extract | ToolId::Remove => Some(PagePreview::new(true)),
+        ToolId::Rotate | ToolId::Extract | ToolId::Remove | ToolId::NumberPages | ToolId::Watermark => {
+            Some(PagePreview::new(true))
+        }
         ToolId::Split => Some(PagePreview::new(false)),
         _ => None,
     };
@@ -305,7 +673,7 @@ pub fn build(app: &Rc<AppState>, info: &'static ToolInfo, files: Vec<PathBuf>) -
     // Destino
     let dest_group = adw::PreferencesGroup::builder()
         .title("Destino")
-        .description("O original nunca é alterado. Se já existir um arquivo com o mesmo nome, o novo recebe um número, como “nome (2).pdf”.")
+        .description("O original nunca é alterado. Se já existir um arquivo com o mesmo nome, o novo recebe um número, como “nome (2)”.")
         .build();
     let dest_row = widgets::plain_row("Pasta", "A mesma do primeiro arquivo");
     let dest_reset = widgets::icon_button("edit-undo-symbolic", "Voltar a usar a pasta do arquivo original");
@@ -359,6 +727,9 @@ pub fn build(app: &Rc<AppState>, info: &'static ToolInfo, files: Vec<PathBuf>) -
         options_group,
         preview,
         layout,
+        stamp_preview,
+        text_preview,
+        form_hint,
         plan_ok: Cell::new(true),
         from_click: Cell::new(false),
         dest_dir: RefCell::new(None),
@@ -374,6 +745,7 @@ pub fn build(app: &Rc<AppState>, info: &'static ToolInfo, files: Vec<PathBuf>) -
         scroll: scroll.clone(),
         running: RefCell::new(None),
         deps_ok,
+        text_pages: RefCell::new(HashMap::new()),
     });
     run_button.set_sensitive(deps_ok);
 
@@ -489,7 +861,63 @@ pub fn build(app: &Rc<AppState>, info: &'static ToolInfo, files: Vec<PathBuf>) -
             let r = refresh.clone();
             dpi.connect_value_notify(move |_| r());
         }
-        Options::Compress { .. } | Options::None => {}
+        Options::Numbers { position, format, first, size, spec } => {
+            let r = refresh.clone();
+            position.connect_selected_notify(move |_| r());
+            let r = refresh.clone();
+            format.connect_selected_notify(move |_| r());
+            let r = refresh.clone();
+            first.connect_value_notify(move |_| r());
+            let r = refresh.clone();
+            size.connect_value_notify(move |_| r());
+            let r = refresh.clone();
+            spec.connect_changed(move |_| r());
+        }
+        Options::Watermark { text, color, opacity, scale, diagonal, spec } => {
+            for e in [text, spec] {
+                let r = refresh.clone();
+                e.connect_changed(move |_| r());
+            }
+            let r = refresh.clone();
+            color.connect_selected_notify(move |_| r());
+            for s in [opacity, scale] {
+                let r = refresh.clone();
+                s.connect_value_notify(move |_| r());
+            }
+            let r = refresh.clone();
+            diagonal.connect_active_notify(move |_| r());
+        }
+        Options::Metadata(m) => {
+            let r = refresh.clone();
+            m.remove_all.connect_active_notify(move |_| r());
+        }
+        Options::Protect(p) => {
+            for e in [&p.password, &p.confirm, &p.owner] {
+                let r = refresh.clone();
+                e.connect_changed(move |_| r());
+            }
+            let r = refresh.clone();
+            p.restrict.connect_enable_expansion_notify(move |_| r());
+        }
+        Options::Unlock { password } => {
+            let r = refresh.clone();
+            password.connect_changed(move |_| r());
+        }
+        Options::Text { layout } => {
+            let p = Rc::downgrade(&page);
+            layout.connect_active_notify(move |l| {
+                if let Some(p) = p.upgrade()
+                    && let Some(t) = &p.text_preview
+                {
+                    t.update(p.files.borrow().first().map(PathBuf::as_path), l.is_active());
+                }
+            });
+        }
+        Options::Ocr { skip, .. } => {
+            let r = refresh.clone();
+            skip.connect_active_notify(move |_| r());
+        }
+        Options::Compress { .. } | Options::None | Options::Office => {}
     }
     if let Some(preview) = &page.preview {
         let r = refresh.clone();
@@ -504,10 +932,15 @@ pub fn build(app: &Rc<AppState>, info: &'static ToolInfo, files: Vec<PathBuf>) -
 
     page.add_files(files);
     page.update_name_row();
-    // Ferramentas que pedem páginas já abrem com o cursor no campo.
-    let first_entry = match &page.options {
+    // Ferramentas que pedem algo digitado já abrem com o cursor no campo.
+    let first_entry: Option<adw::EntryRow> = match &page.options {
         Options::Split { ranges, .. } => Some(ranges.clone()),
         Options::Extract { spec, .. } | Options::Remove { spec } | Options::Rotate { spec, .. } => Some(spec.clone()),
+        Options::Numbers { spec, .. } => Some(spec.clone()),
+        Options::Watermark { text, .. } => Some(text.clone()),
+        Options::Metadata(m) => Some(m.title.clone()),
+        Options::Protect(p) => Some(p.password.clone().upcast()),
+        Options::Unlock { password } => Some(password.clone().upcast()),
         _ => None,
     };
     if let Some(entry) = first_entry {
@@ -534,13 +967,34 @@ pub fn build(app: &Rc<AppState>, info: &'static ToolInfo, files: Vec<PathBuf>) -
 }
 
 impl ToolPage {
+    /// Campos em que Enter executa a ferramenta.
     fn entries(&self) -> Vec<adw::EntryRow> {
         match &self.options {
             Options::Split { ranges, .. } => vec![ranges.clone()],
             Options::Extract { spec, .. } | Options::Remove { spec } | Options::Rotate { spec, .. } => {
                 vec![spec.clone()]
             }
+            Options::Numbers { spec, .. } => vec![spec.clone()],
+            Options::Watermark { text, spec, .. } => vec![text.clone(), spec.clone()],
+            Options::Metadata(m) => vec![m.title.clone(), m.author.clone(), m.subject.clone(), m.keywords.clone()],
+            Options::Protect(p) => {
+                vec![p.password.clone().upcast(), p.confirm.clone().upcast(), p.owner.clone().upcast()]
+            }
+            Options::Unlock { password } => vec![password.clone().upcast()],
             _ => vec![],
+        }
+    }
+
+    /// Campo de páginas validado pela pré-visualização.
+    fn spec_entry(&self) -> Option<adw::EntryRow> {
+        match &self.options {
+            Options::Split { ranges, .. } => Some(ranges.clone()),
+            Options::Extract { spec, .. }
+            | Options::Remove { spec }
+            | Options::Rotate { spec, .. }
+            | Options::Numbers { spec, .. }
+            | Options::Watermark { spec, .. } => Some(spec.clone()),
+            _ => None,
         }
     }
 
@@ -595,6 +1049,7 @@ impl ToolPage {
             let what = match self.info.accepts {
                 Accepts::Pdf => "somente PDFs",
                 Accepts::Images => "somente imagens JPEG, PNG, WebP, GIF, BMP ou TIFF",
+                Accepts::Office => "somente documentos, planilhas e apresentações",
             };
             self.toast(&format!("{} arquivo(s) ignorado(s): esta ferramenta aceita {what}.", rejected.len()));
         }
@@ -640,10 +1095,19 @@ impl ToolPage {
                 n.set_tooltip_text(Some("Posição no resultado"));
                 row.add_prefix(&n);
             }
-            let thumb = thumbs::picture(path, 40, 48);
-            thumb.set_margin_top(6);
-            thumb.set_margin_bottom(6);
-            row.add_prefix(&thumb);
+            if thumbs::is_office(path) {
+                let icon = gtk::Image::from_icon_name("pdftoolbox-office-para-pdf-symbolic");
+                icon.set_pixel_size(32);
+                icon.add_css_class("icone-documento");
+                icon.set_margin_top(8);
+                icon.set_margin_bottom(8);
+                row.add_prefix(&icon);
+            } else {
+                let thumb = thumbs::picture(path, 40, 48);
+                thumb.set_margin_top(6);
+                thumb.set_margin_bottom(6);
+                row.add_prefix(&thumb);
+            }
             if ordered && files.len() > 1 {
                 let up = widgets::icon_button("go-up-symbolic", "Mover para cima");
                 let down = widgets::icon_button("go-down-symbolic", "Mover para baixo");
@@ -682,7 +1146,74 @@ impl ToolPage {
         if let Some(preview) = &self.preview {
             preview.set_files(&files);
         }
+        if let (Some(t), Options::Text { layout }) = (&self.text_preview, &self.options) {
+            t.update(files.first().map(PathBuf::as_path), layout.is_active());
+        }
+        if let Options::Metadata(m) = &self.options {
+            self.load_metadata(m, files.first().cloned());
+        }
+        if let Options::Ocr { .. } = &self.options {
+            for path in &files {
+                if self.text_pages.borrow().contains_key(path) {
+                    continue;
+                }
+                self.text_pages.borrow_mut().insert(path.clone(), None);
+                let p = Rc::downgrade(self);
+                let path = path.clone();
+                glib::spawn_future_local(async move {
+                    let f = path.clone();
+                    let counts = widgets::blocking(move || operations::text_pages(&f, &CancelToken::new()).ok()).await;
+                    if let Some(p) = p.upgrade() {
+                        if let Some(c) = counts {
+                            p.text_pages.borrow_mut().insert(path, Some(c));
+                        }
+                        p.refresh_preview();
+                    }
+                });
+            }
+        }
         self.refresh_preview();
+    }
+
+    /// Preenche os campos com os metadados do arquivo (só ao trocar de arquivo,
+    /// para não apagar o que o usuário já digitou).
+    fn load_metadata(&self, m: &MetadataRows, file: Option<PathBuf>) {
+        if *m.loaded.borrow() == file {
+            return;
+        }
+        *m.loaded.borrow_mut() = file.clone();
+        let rows = [m.title.clone(), m.author.clone(), m.subject.clone(), m.keywords.clone()];
+        for r in &rows {
+            r.set_text("");
+        }
+        for r in &m.facts {
+            r.set_subtitle("—");
+        }
+        let Some(file) = file else { return };
+        let facts = m.facts.clone();
+        let loaded = file.clone();
+        let Options::Metadata(_) = &self.options else { return };
+        let weak_title = m.title.downgrade();
+        glib::spawn_future_local(async move {
+            let path = file.clone();
+            let info =
+                widgets::blocking(move || poppler::doc_info(&path, &pdftoolbox::jobs::CancelToken::new()).ok()).await;
+            // A página pode ter sido fechada ou o arquivo trocado nesse meio-tempo.
+            if weak_title.upgrade().is_none() || loaded != file {
+                return;
+            }
+            let Some(info) = info else { return };
+            for (row, value) in rows.iter().zip([&info.title, &info.author, &info.subject, &info.keywords]) {
+                if row.text().is_empty() {
+                    row.set_text(value);
+                }
+            }
+            let dates = [friendly_date(&info.created), friendly_date(&info.modified)];
+            let values = [&info.creator, &info.producer, &dates[0], &dates[1]];
+            for (row, value) in facts.iter().zip(values) {
+                row.set_subtitle(if value.is_empty() { "—" } else { value.as_str() });
+            }
+        });
     }
 
     /// Lê páginas/dimensões em segundo plano e atualiza a linha.
@@ -691,8 +1222,13 @@ impl ToolPage {
         let p = Rc::downgrade(self);
         glib::spawn_future_local(async move {
             let facts = thumbs::facts(&path).await;
-            row.set_subtitle(&facts.line(is_pdf));
-            if facts.problem.is_some() {
+            let unlock_tool = p.upgrade().is_some_and(|p| p.info.id == ToolId::Unlock);
+            if facts.locked && !unlock_tool {
+                row.set_subtitle("🔒 Protegido por senha — use “Remover senha” antes desta ferramenta");
+            } else {
+                row.set_subtitle(&facts.line(is_pdf));
+            }
+            if facts.problem.is_some() || (facts.locked && !unlock_tool) {
                 row.add_css_class("texto-erro");
             }
             if let Some(p) = p.upgrade() {
@@ -737,6 +1273,13 @@ impl ToolPage {
                 };
                 preview::split(&mode, total)
             }
+            Options::Numbers { format, first, spec, .. } => preview::numbers(
+                &spec_of(spec),
+                FORMATS[(format.selected() as usize).min(2)],
+                first.value() as u32,
+                total,
+            ),
+            Options::Watermark { spec, .. } => preview::watermark(&spec_of(spec), total),
             _ => return None,
         };
         Some(result.map_err(|e| e.to_string()))
@@ -775,6 +1318,28 @@ impl ToolPage {
                 };
                 self.options_group.set_description(Some(&glib::markup_escape_text(&text)));
             }
+            Options::Ocr { .. } => {
+                let text = match self.ocr_counts() {
+                    Some((with_text, total)) => {
+                        let without = total - with_text;
+                        let mut t = ocr_summary(without, total);
+                        t.push_str(" Leva alguns segundos por página.");
+                        t
+                    }
+                    None => "As páginas digitalizadas continuam como estão; o texto reconhecido entra numa \
+                             camada invisível por cima, que permite buscar e copiar."
+                        .into(),
+                };
+                self.options_group.set_description(Some(&text));
+            }
+            Options::Metadata(m) => {
+                let text = if m.remove_all.is_active() {
+                    "Título, autor, assunto, palavras-chave, programas e datas serão apagados."
+                } else {
+                    "Campos deixados em branco são removidos do arquivo."
+                };
+                self.options_group.set_description(Some(text));
+            }
             Options::None if self.info.id == ToolId::Merge => {
                 let info = self.file_info.borrow();
                 let pages: Option<u32> = files.iter().map(|f| info.get(f).and_then(|i| i.pages)).sum();
@@ -788,8 +1353,26 @@ impl ToolPage {
             _ => {}
         }
 
+        // Validação dos campos que não são páginas (senhas, texto…).
+        let check = self.form_check();
+        let (form_ok, hint, is_error) = match &check {
+            Ok(None) => (true, None, false),
+            Ok(Some(warning)) => (true, Some(warning.clone()), false),
+            Err(FormIssue::Incomplete(msg)) => (false, Some(msg.clone()).filter(|m| !m.is_empty()), false),
+            Err(FormIssue::Invalid(msg)) => (false, Some(msg.clone()), true),
+        };
+        self.form_hint.set_visible(hint.is_some());
+        self.form_hint.set_text(hint.as_deref().unwrap_or(""));
+        self.form_hint.set_css_classes(if is_error { &["texto-erro"] } else { &["texto-aviso"] });
+
         // Grade de páginas, validação ao vivo e botão principal.
-        let Some(preview) = &self.preview else { return };
+        let Some(preview) = &self.preview else {
+            self.run_button.set_sensitive(self.deps_ok && form_ok);
+            if self.running.borrow().is_none() {
+                self.run_button.set_label(&self.action_label(None));
+            }
+            return;
+        };
         let plan = self.plan();
         let idle = match &self.options {
             Options::Extract { .. } => Some("Digite as páginas a extrair ou clique nelas abaixo."),
@@ -797,7 +1380,7 @@ impl ToolPage {
             Options::Split { .. } => Some("Digite os intervalos; cada um vira um arquivo, com uma cor."),
             _ => None,
         };
-        let entry = self.entries().into_iter().next();
+        let entry = self.spec_entry();
         match &plan {
             Some(Ok(plan)) => preview.apply(Ok(plan), None, !self.from_click.get()),
             Some(Err(e)) => preview.apply(Err(e.clone()), None, false),
@@ -813,15 +1396,132 @@ impl ToolPage {
         }
         self.plan_ok.set(!invalid);
         let waiting = plan.is_none() && idle.is_some() && preview.total().is_some();
-        self.run_button.set_sensitive(self.deps_ok && !invalid && !waiting);
+        self.run_button.set_sensitive(self.deps_ok && !invalid && !waiting && form_ok);
+        self.refresh_stamp(plan.as_ref().and_then(|p| p.as_ref().ok()), form_ok);
         if self.running.borrow().is_none() {
             self.run_button.set_label(&self.action_label(plan.as_ref().and_then(|p| p.as_ref().ok())));
+        }
+    }
+
+    /// Problemas nos campos: `Err` impede executar; `Ok(Some)` é só um aviso.
+    fn form_check(&self) -> Result<Option<String>, FormIssue> {
+        match &self.options {
+            Options::Watermark { text, .. } => {
+                let t = text.text();
+                if t.trim().is_empty() {
+                    text.add_css_class("error");
+                    return Err(FormIssue::Incomplete("Digite o texto da marca d’água.".into()));
+                }
+                let (_, missing) = stamp::encode(t.trim());
+                if !missing.is_empty() {
+                    text.add_css_class("error");
+                    return Err(FormIssue::Invalid(unsupported_chars(&missing)));
+                }
+                text.remove_css_class("error");
+                Ok(None)
+            }
+            Options::Protect(p) => {
+                let (pw, confirm) = (p.password.text(), p.confirm.text());
+                p.confirm.remove_css_class("error");
+                p.owner.remove_css_class("error");
+                if pw.is_empty() {
+                    return Err(FormIssue::Incomplete(String::new()));
+                }
+                if confirm.is_empty() {
+                    return Err(FormIssue::Incomplete("Repita a senha para confirmar.".into()));
+                }
+                if pw != confirm {
+                    p.confirm.add_css_class("error");
+                    return Err(FormIssue::Invalid("As senhas não coincidem.".into()));
+                }
+                if p.restrict.enables_expansion() {
+                    let owner = p.owner.text();
+                    if owner.is_empty() {
+                        return Err(FormIssue::Incomplete(
+                            "Digite a senha de permissões (ou desligue as restrições).".into(),
+                        ));
+                    }
+                    if owner == pw {
+                        p.owner.add_css_class("error");
+                        return Err(FormIssue::Invalid(
+                            "A senha de permissões precisa ser diferente da senha para abrir.".into(),
+                        ));
+                    }
+                }
+                if pw.chars().count() < 8 {
+                    return Ok(Some("Senha curta: com menos de 8 caracteres ela é fácil de adivinhar.".into()));
+                }
+                Ok(None)
+            }
+            Options::Unlock { password } => {
+                if password.text().is_empty() {
+                    Err(FormIssue::Incomplete(String::new()))
+                } else {
+                    Ok(None)
+                }
+            }
+            Options::Ocr { skip, .. } => match self.ocr_counts() {
+                Some((with_text, total)) if with_text == total && skip.is_active() => Err(FormIssue::Incomplete(
+                    "Não há páginas para reconhecer. Se o texto existente estiver errado ou ilegível, desligue \
+                     “Pular páginas que já têm texto”."
+                        .into(),
+                )),
+                Some((with_text, _)) if with_text > 0 && !skip.is_active() => Ok(Some(
+                    "Páginas que já têm texto vão ganhar uma segunda cópia dele, e a busca pode encontrar tudo em \
+                     dobro."
+                        .into(),
+                )),
+                _ => Ok(None),
+            },
+            _ => Ok(None),
+        }
+    }
+
+    /// “Como vai ficar”: primeira página afetada, com o carimbo real.
+    fn refresh_stamp(&self, plan: Option<&Plan>, form_ok: bool) {
+        let Some(sp) = &self.stamp_preview else { return };
+        let (Some(plan), Some(path), true) = (plan, self.preview.as_ref().and_then(|p| p.current()), form_ok) else {
+            sp.hide();
+            return;
+        };
+        let Some(page) = plan.first_marked() else {
+            sp.hide();
+            return;
+        };
+        let chosen = plan.marks.iter().filter(|m| m.kind != preview::MarkKind::Normal).count() as u32;
+        match &self.options {
+            Options::Numbers { position, format, first, size, .. } => {
+                let style = number_style(position, format, first, size);
+                let (n, last) = (style.first_number, style.first_number + chosen.saturating_sub(1));
+                let label = stamp::number_text(style.format, n, last);
+                let caption = format!("Página {page}, a primeira numerada: recebe “{label}”.");
+                sp.show(&path, page, &caption, Box::new(move |size| stamp::number_page(size, n, last, &style)));
+            }
+            Options::Watermark { text, color, opacity, scale, diagonal, .. } => {
+                let style = watermark_style(text, color, opacity, scale, diagonal);
+                let caption = format!("Página {page}, a primeira com a marca d’água.");
+                sp.show(&path, page, &caption, Box::new(move |size| stamp::watermark(&[size], &[1], &style).remove(0)));
+            }
+            _ => sp.hide(),
         }
     }
 
     /// Rótulo do botão que diz exatamente o que vai acontecer.
     fn action_label(&self, plan: Option<&Plan>) -> String {
         let base = run_label(self.info.id).to_string();
+        let files = self.files.borrow().len();
+        let many = |verb: &str, noun: &str| format!("{verb} {files} {noun}");
+        match &self.options {
+            Options::Metadata(m) if m.remove_all.is_active() => return "Apagar metadados".into(),
+            Options::Protect(_) if files > 1 => return many("Proteger", "arquivos"),
+            Options::Unlock { .. } if files > 1 => return many("Remover senha de", "arquivos"),
+            Options::Text { .. } if files > 1 => return many("Extrair texto de", "arquivos"),
+            Options::Office if files > 1 => return many("Converter", "documentos"),
+            Options::Ocr { .. } if files > 1 => return many("Reconhecer texto de", "arquivos"),
+            Options::Numbers { .. } if files > 1 => return many("Numerar", "arquivos"),
+            Options::Watermark { .. } if files > 1 => return many("Aplicar marca d’água em", "arquivos"),
+            _ => {}
+        }
         let Some(plan) = plan else { return base };
         let count = |f: &dyn Fn(&preview::MarkKind) -> bool| plan.marks.iter().filter(|m| f(&m.kind)).count();
         let pages = |n: usize| if n == 1 { "1 página".to_string() } else { format!("{n} páginas") };
@@ -838,6 +1538,18 @@ impl ToolPage {
                 format!("Extrair {}", pages(n))
             }
             Options::Remove { .. } => format!("Remover {}", pages(count(&|k| *k == preview::MarkKind::Removed))),
+            Options::Numbers { .. } => {
+                let n = count(&|k| *k == preview::MarkKind::Selected);
+                if n == plan.marks.len() { "Numerar todas as páginas".into() } else { format!("Numerar {}", pages(n)) }
+            }
+            Options::Watermark { .. } => {
+                let n = count(&|k| *k == preview::MarkKind::Selected);
+                if n == plan.marks.len() {
+                    "Aplicar em todas as páginas".into()
+                } else {
+                    format!("Aplicar em {}", pages(n))
+                }
+            }
             Options::Split { .. } => {
                 let n = plan
                     .marks
@@ -859,7 +1571,10 @@ impl ToolPage {
     fn toggle_page(&self, page: u32) {
         let Some(total) = self.preview.as_ref().and_then(|p| p.total()) else { return };
         let (row, ordered) = match &self.options {
-            Options::Rotate { spec, .. } | Options::Remove { spec } => (spec, false),
+            Options::Rotate { spec, .. }
+            | Options::Remove { spec }
+            | Options::Numbers { spec, .. }
+            | Options::Watermark { spec, .. } => (spec, false),
             Options::Extract { spec, .. } => (spec, true),
             _ => return,
         };
@@ -888,14 +1603,33 @@ impl ToolPage {
         self.dest_row.set_subtitle(&label);
     }
 
+    /// OCR: soma das páginas com texto e do total dos arquivos da lista,
+    /// quando todos já foram lidos.
+    fn ocr_counts(&self) -> Option<(u32, u32)> {
+        let files = self.files.borrow();
+        if files.is_empty() {
+            return None;
+        }
+        let known = self.text_pages.borrow();
+        files.iter().try_fold((0, 0), |(a, b), f| known.get(f).copied().flatten().map(|(t, n)| (a + t, b + n)))
+    }
+
     fn single_output(&self) -> bool {
         let n = self.files.borrow().len();
         match &self.options {
             Options::Extract { separate, .. } => !separate.is_active(),
             Options::Images { one_file, .. } => one_file.is_active() || n <= 1,
             Options::Split { .. } | Options::ToImages { .. } => false,
-            Options::Rotate { .. } | Options::Compress { .. } => n <= 1,
-            Options::Remove { .. } | Options::None => true,
+            Options::Rotate { .. }
+            | Options::Compress { .. }
+            | Options::Numbers { .. }
+            | Options::Watermark { .. }
+            | Options::Protect(_)
+            | Options::Unlock { .. }
+            | Options::Text { .. }
+            | Options::Office
+            | Options::Ocr { .. } => n <= 1,
+            Options::Remove { .. } | Options::None | Options::Metadata(_) => true,
         }
     }
 
@@ -956,16 +1690,82 @@ impl ToolPage {
                 quality: quality.value() as u8,
             },
             Options::Compress { level } => Request::Compress { inputs: files, level: level_from(level.selected()) },
+            Options::Numbers { position, format, first, size, spec } => Request::NumberPages {
+                inputs: files,
+                spec: spec_text(spec),
+                style: number_style(position, format, first, size),
+            },
+            Options::Watermark { text, color, opacity, scale, diagonal, spec } => Request::Watermark {
+                inputs: files,
+                spec: spec_text(spec),
+                style: watermark_style(text, color, opacity, scale, diagonal),
+            },
+            Options::Metadata(m) => Request::Metadata {
+                input: first,
+                change: if m.remove_all.is_active() {
+                    MetadataChange::RemoveAll
+                } else {
+                    MetadataChange::Set(DocFields {
+                        title: m.title.text().to_string(),
+                        author: m.author.text().to_string(),
+                        subject: m.subject.text().to_string(),
+                        keywords: m.keywords.text().to_string(),
+                    })
+                },
+            },
+            Options::Protect(p) => {
+                if p.password.text() != p.confirm.text() {
+                    return Err(OpError::InvalidRange("As senhas não coincidem.".into()));
+                }
+                Request::Protect {
+                    inputs: files,
+                    password: Secret::new(p.password.text().to_string()),
+                    restrictions: p.restrict.enables_expansion().then(|| Restrictions {
+                        owner: Secret::new(p.owner.text().to_string()),
+                        allow_print: p.print.is_active(),
+                        allow_copy: p.copy.is_active(),
+                        allow_edit: p.edit.is_active(),
+                    }),
+                }
+            }
+            Options::Unlock { password } => {
+                Request::Unlock { inputs: files, password: Secret::new(password.text().to_string()) }
+            }
+            Options::Text { layout } => Request::ExtractText { inputs: files, layout: layout.is_active() },
+            Options::Office => Request::OfficeToPdf { inputs: files },
+            Options::Ocr { language, skip, straighten } => Request::Ocr {
+                inputs: files,
+                options: OcrOptions {
+                    language: match language.selected() {
+                        1 => OcrLanguage::Portuguese,
+                        2 => OcrLanguage::English,
+                        _ => OcrLanguage::PortugueseEnglish,
+                    },
+                    skip_text_pages: skip.is_active(),
+                    straighten: straighten.is_active(),
+                },
+            },
         })
     }
 
     fn set_running(&self, running: bool) {
+        // O foco acompanha o botão visível: sem isso, ao esconder o botão
+        // focado o GTK leva o foco para o topo da janela.
+        let had_focus = self.run_button.has_focus() || self.cancel_button.has_focus();
         self.run_button.set_visible(!running);
         self.cancel_button.set_visible(running);
         self.cancel_button.set_sensitive(true);
         self.progress.set_visible(running);
         self.status.set_visible(running);
         self.files_group.set_sensitive(!running);
+        let focus_lost = self.window().is_some_and(|w| gtk::prelude::GtkWindowExt::focus(&w).is_none());
+        if had_focus || running || focus_lost {
+            if running {
+                self.cancel_button.grab_focus();
+            } else {
+                self.run_button.grab_focus();
+            }
+        }
     }
 
     fn run(self: &Rc<Self>) {
@@ -1131,6 +1931,18 @@ impl ToolPage {
     }
 }
 
+/// “2 de 5 páginas não têm texto selecionável e serão reconhecidas.”
+fn ocr_summary(without: u32, total: u32) -> String {
+    match (without, total) {
+        (0, 1) => "A página já tem texto selecionável.".into(),
+        (0, n) => format!("Todas as {n} páginas já têm texto selecionável."),
+        (1, 1) => "A página não tem texto selecionável e será reconhecida.".into(),
+        (w, n) if w == n => format!("Nenhuma das {n} páginas tem texto selecionável: todas serão reconhecidas."),
+        (1, n) => format!("1 de {n} páginas não tem texto selecionável e será reconhecida."),
+        (w, n) => format!("{w} de {n} páginas não têm texto selecionável e serão reconhecidas."),
+    }
+}
+
 fn angle_of(selected: u32) -> i32 {
     match selected {
         0 => 90,
@@ -1215,4 +2027,25 @@ fn error_group(e: &OpError) -> adw::PreferencesGroup {
         group.add(&row);
     }
     group
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{friendly_date, ocr_summary};
+
+    #[test]
+    fn ocr_summary_agrees_in_number() {
+        assert_eq!(ocr_summary(1, 3), "1 de 3 páginas não tem texto selecionável e será reconhecida.");
+        assert_eq!(ocr_summary(2, 3), "2 de 3 páginas não têm texto selecionável e serão reconhecidas.");
+        assert_eq!(ocr_summary(1, 1), "A página não tem texto selecionável e será reconhecida.");
+        assert_eq!(ocr_summary(0, 4), "Todas as 4 páginas já têm texto selecionável.");
+    }
+
+    #[test]
+    fn dates_are_shown_in_brazilian_format() {
+        assert_eq!(friendly_date("2026-10-14T09:59:35-03"), "14/10/2026, 09:59");
+        assert_eq!(friendly_date("2026-10-14T09:59:35Z"), "14/10/2026, 09:59");
+        assert_eq!(friendly_date("ontem"), "ontem");
+        assert_eq!(friendly_date(""), "");
+    }
 }

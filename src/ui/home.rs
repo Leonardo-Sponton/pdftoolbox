@@ -24,6 +24,10 @@ pub struct Home {
     suggest: gtk::Button,
     suggest_content: adw::ButtonContent,
     staged: RefCell<Vec<PathBuf>>,
+    /// PDFs escolhidos que exigem senha (descobertos ao ler os arquivos).
+    locked: RefCell<Vec<PathBuf>>,
+    /// PDFs sem texto selecionável na primeira página (digitalizações).
+    scanned: RefCell<Vec<PathBuf>>,
     recent_box: gtk::FlowBox,
     recent_section: gtk::Box,
     cards: RefCell<Vec<ToolCard>>,
@@ -48,8 +52,9 @@ impl ToolCard {
         self.button.set_sensitive(ok);
         self.reason.set_visible(!ok);
         self.reason.set_text(match self.info.accepts {
-            Accepts::Pdf => "Não aceita imagens — só PDFs",
-            Accepts::Images => "Não aceita PDFs — só imagens",
+            Accepts::Pdf => "Só aceita PDFs",
+            Accepts::Images => "Só aceita imagens",
+            Accepts::Office => "Só aceita documentos, planilhas e apresentações",
         });
         let is_suggested = ok && suggested == Some(self.info.id);
         self.badge.set_visible(is_suggested);
@@ -61,17 +66,54 @@ impl ToolCard {
     }
 }
 
-/// Ferramenta mais provável para os arquivos escolhidos.
-fn suggestion(files: &[PathBuf]) -> Option<ToolId> {
-    let pdfs = files.iter().filter(|f| catalog::extension_ok(Accepts::Pdf, f)).count();
-    let images = files.len() - pdfs;
-    match (pdfs, images) {
-        (0, 0) => None,
-        (0, _) => Some(ToolId::ImagesToPdf),
-        (1, 0) => Some(ToolId::Organize),
-        (_, 0) => Some(ToolId::Merge),
+/// Ferramenta mais provável para os arquivos escolhidos. `locked` são os PDFs
+/// já identificados como protegidos por senha; `scanned`, os sem texto.
+fn suggestion(files: &[PathBuf], locked: &[PathBuf], scanned: &[PathBuf]) -> Option<ToolId> {
+    let count = |a: Accepts| files.iter().filter(|f| catalog::extension_ok(a, f)).count();
+    let (pdfs, images, office) = (count(Accepts::Pdf), count(Accepts::Images), count(Accepts::Office));
+    // Um PDF com senha trava as demais ferramentas: desbloquear vem primeiro.
+    let any_locked = files.iter().any(|f| locked.contains(f));
+    match (pdfs, images, office) {
+        (0, 0, 0) => None,
+        (0, _, 0) => Some(ToolId::ImagesToPdf),
+        (0, 0, _) => Some(ToolId::OfficeToPdf),
+        (_, 0, 0) if any_locked => Some(ToolId::Unlock),
+        // Só digitalizações: tornar o texto pesquisável vem antes do resto.
+        (_, 0, 0) if files.iter().all(|f| scanned.contains(f)) => Some(ToolId::Ocr),
+        (1, 0, 0) => Some(ToolId::Organize),
+        (_, 0, 0) => Some(ToolId::Merge),
         _ => None,
     }
+}
+
+/// “2 PDFs, 1 imagem e 3 documentos prontos”.
+fn staged_title(files: &[PathBuf]) -> String {
+    let count = |a: Accepts| files.iter().filter(|f| catalog::extension_ok(a, f)).count();
+    let (pdfs, images, office) = (count(Accepts::Pdf), count(Accepts::Images), count(Accepts::Office));
+    let mut parts = Vec::new();
+    if pdfs > 0 {
+        parts.push(format!("{pdfs} PDF{}", if pdfs > 1 { "s" } else { "" }));
+    }
+    if images > 0 {
+        parts.push(format!("{images} {}", if images > 1 { "imagens" } else { "imagem" }));
+    }
+    if office > 0 {
+        parts.push(format!("{office} documento{}", if office > 1 { "s" } else { "" }));
+    }
+    let list = match parts.as_slice() {
+        [] => String::new(),
+        [one] => one.clone(),
+        [init @ .., last] => format!("{} e {last}", init.join(", ")),
+    };
+    // “imagem” é feminino; com outros tipos na mistura, o plural fica no masculino.
+    let feminine = images == files.len();
+    let ready = match (files.len() > 1, feminine) {
+        (false, true) => "pronta",
+        (false, false) => "pronto",
+        (true, true) => "prontas",
+        (true, false) => "prontos",
+    };
+    format!("{list} {ready}")
 }
 
 fn tool_card(info: &'static ToolInfo, on_click: impl Fn(&'static ToolInfo) + 'static) -> ToolCard {
@@ -337,6 +379,8 @@ impl Home {
                 suggest: suggest.clone(),
                 suggest_content,
                 staged: RefCell::new(Vec::new()),
+                locked: RefCell::new(Vec::new()),
+                scanned: RefCell::new(Vec::new()),
                 recent_box,
                 recent_section,
                 cards: RefCell::new(cards),
@@ -365,7 +409,7 @@ impl Home {
             let h = Rc::downgrade(&home);
             suggest.connect_clicked(move |_| {
                 if let Some(h) = h.upgrade()
-                    && let Some(id) = suggestion(&h.staged.borrow())
+                    && let Some(id) = suggestion(&h.staged.borrow(), &h.locked.borrow(), &h.scanned.borrow())
                 {
                     h.launch(catalog::info(id));
                 }
@@ -426,30 +470,14 @@ impl Home {
     pub fn stage(self: &Rc<Self>, files: Vec<PathBuf>) {
         let files: Vec<PathBuf> = files
             .into_iter()
-            .filter(|f| {
-                catalog::extension_ok(catalog::Accepts::Pdf, f) || catalog::extension_ok(catalog::Accepts::Images, f)
-            })
+            .filter(|f| [Accepts::Pdf, Accepts::Images, Accepts::Office].iter().any(|a| catalog::extension_ok(*a, f)))
             .collect();
-        let pdfs = files.iter().filter(|f| catalog::extension_ok(catalog::Accepts::Pdf, f)).count();
-        let images = files.len() - pdfs;
+        self.locked.borrow_mut().retain(|f| files.contains(f));
+        self.scanned.borrow_mut().retain(|f| files.contains(f));
         self.empty_box.set_visible(files.is_empty());
         self.staged_box.set_visible(!files.is_empty());
         if !files.is_empty() {
-            let mut parts = Vec::new();
-            if pdfs > 0 {
-                parts.push(format!("{pdfs} PDF{}", if pdfs > 1 { "s" } else { "" }));
-            }
-            if images > 0 {
-                parts.push(format!("{images} {}", if images > 1 { "imagens" } else { "imagem" }));
-            }
-            // “imagem” é feminino; com PDFs na mistura, o plural fica no masculino.
-            let ready = match (files.len() > 1, pdfs == 0) {
-                (false, true) => "pronta",
-                (false, false) => "pronto",
-                (true, true) => "prontas",
-                (true, false) => "prontos",
-            };
-            self.staged_title.set_text(&format!("{} {ready}", parts.join(" e ")));
+            self.staged_title.set_text(&staged_title(&files));
         }
         // Cartões dos arquivos (recriados: a lista é curta e não tem navegação por teclado).
         while let Some(c) = self.staged_flow.first_child() {
@@ -458,7 +486,14 @@ impl Home {
         for path in &files {
             self.staged_flow.append(&self.file_card(path));
         }
-        let suggested = suggestion(&files);
+        *self.staged.borrow_mut() = files;
+        self.refresh_suggestion();
+    }
+
+    /// Recalcula a sugestão e o estado dos cartões de ferramenta.
+    fn refresh_suggestion(&self) {
+        let files = self.staged.borrow().clone();
+        let suggested = suggestion(&files, &self.locked.borrow(), &self.scanned.borrow());
         // Atalho para a ferramenta mais provável, junto dos arquivos.
         self.suggest.set_visible(suggested.is_some());
         if let Some(id) = suggested {
@@ -470,7 +505,6 @@ impl Home {
         for card in self.cards.borrow().iter().chain(self.recent_cards.borrow().iter()) {
             card.reflect(&files, suggested);
         }
-        *self.staged.borrow_mut() = files;
     }
 
     /// Cartão de um arquivo escolhido: primeira página, nome, páginas e tamanho.
@@ -479,7 +513,21 @@ impl Home {
         let holder = gtk::Box::builder().height_request(140).valign(gtk::Align::End).build();
         thumb.set_hexpand(true);
         thumb.set_valign(gtk::Align::End);
-        holder.append(&thumb);
+        if thumbs::is_office(path) {
+            // Sem miniatura (seria preciso converter): ícone do tipo de arquivo.
+            let icon = gtk::Image::builder()
+                .icon_name("pdftoolbox-office-para-pdf-symbolic")
+                .pixel_size(56)
+                .hexpand(true)
+                .valign(gtk::Align::Center)
+                .vexpand(true)
+                .build();
+            icon.add_css_class("tool-icon");
+            icon.add_css_class("icone-documento");
+            holder.append(&icon);
+        } else {
+            holder.append(&thumb);
+        }
         let remove = widgets::icon_button("window-close-symbolic", "Tirar da lista");
         // Com contorno e fundo próprio, visível sobre qualquer miniatura e tema.
         remove.remove_css_class("flat");
@@ -507,6 +555,7 @@ impl Home {
         card.set_tooltip_text(Some(&path.to_string_lossy()));
         let is_pdf = catalog::extension_ok(Accepts::Pdf, path);
         let (f, c, t, p) = (facts.downgrade(), card.downgrade(), thumb.downgrade(), path.to_path_buf());
+        let h = Rc::downgrade(self);
         glib::spawn_future_local(async move {
             let info = thumbs::facts(&p).await;
             if let Some(t) = t.upgrade()
@@ -523,6 +572,17 @@ impl Home {
                     f.add_css_class("texto-erro");
                     c.add_css_class("problema");
                 }
+            }
+            if (info.locked || info.no_text)
+                && let Some(h) = h.upgrade()
+                && h.staged.borrow().contains(&p)
+            {
+                if info.locked {
+                    h.locked.borrow_mut().push(p.clone());
+                } else {
+                    h.scanned.borrow_mut().push(p.clone());
+                }
+                h.refresh_suggestion();
             }
         });
         let h = Rc::downgrade(self);
@@ -555,7 +615,7 @@ impl Home {
         let recent: Vec<&'static ToolInfo> =
             app.settings.borrow().recent.iter().filter_map(|k| catalog::by_key(k)).take(3).collect();
         let staged = self.staged.borrow().clone();
-        let suggested = suggestion(&staged);
+        let suggested = suggestion(&staged, &self.locked.borrow(), &self.scanned.borrow());
         let mut cards = Vec::new();
         for info in &recent {
             let h = Rc::downgrade(self);
@@ -587,5 +647,22 @@ impl Home {
         }
         self.recent_section.set_visible(!searching && self.recent_box.first_child().is_some());
         self.no_results.set_visible(!any);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn scans_suggest_ocr_but_passwords_come_first() {
+        let (scan, typed, locked) =
+            (PathBuf::from("/a/scan.pdf"), PathBuf::from("/a/b.pdf"), PathBuf::from("/a/c.pdf"));
+        let scanned = [scan.clone()];
+        assert_eq!(suggestion(std::slice::from_ref(&scan), &[], &scanned), Some(ToolId::Ocr));
+        assert_eq!(suggestion(&[scan.clone(), typed.clone()], &[], &scanned), Some(ToolId::Merge));
+        assert_eq!(suggestion(&[typed], &[], &scanned), Some(ToolId::Organize));
+        let both = [scan, locked.clone()];
+        assert_eq!(suggestion(&both, &[locked], &scanned), Some(ToolId::Unlock));
     }
 }

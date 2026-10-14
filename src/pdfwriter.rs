@@ -405,6 +405,434 @@ pub fn text_pdf(out: &Path, pages: &[&str], size: (f32, f32)) -> io::Result<()> 
 
 pub const A4_POINTS: (f32, f32) = (595.276, 841.89);
 
+/// Texto a desenhar numa página da camada sobreposta (carimbos).
+#[derive(Debug, Clone, PartialEq)]
+pub struct TextMark {
+    /// Texto já codificado em WinAnsi (veja `stamp::encode`).
+    pub text: Vec<u8>,
+    pub bold: bool,
+    pub size: f32,
+    /// Ponto de origem da linha de base, em pontos.
+    pub x: f32,
+    pub y: f32,
+    /// Rotação anti-horária em graus em torno de (x, y).
+    pub angle: f32,
+    pub color: (f32, f32, f32),
+    pub opacity: f32,
+}
+
+/// Retângulo da camada (destaque ou moldura), origem no canto inferior esquerdo.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct ShapeMark {
+    pub x: f32,
+    pub y: f32,
+    pub w: f32,
+    pub h: f32,
+    pub fill: Option<(f32, f32, f32)>,
+    pub stroke: Option<(f32, f32, f32)>,
+    pub line_width: f32,
+    pub opacity: f32,
+    /// Mistura “multiplicar”: o texto embaixo continua legível (marca-texto).
+    pub multiply: bool,
+}
+
+/// Imagem da camada: índice em `images` de `overlay_pdf_with_images` e a
+/// caixa onde ela é desenhada, origem no canto inferior esquerdo.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct ImageMark {
+    pub image: usize,
+    pub x: f32,
+    pub y: f32,
+    pub w: f32,
+    pub h: f32,
+    pub opacity: f32,
+}
+
+/// Página da camada: tamanho exibido e o que desenhar, nesta ordem:
+/// formas, imagens e textos.
+#[derive(Debug, Clone, PartialEq, Default)]
+pub struct OverlayPage {
+    pub width: f32,
+    pub height: f32,
+    pub shapes: Vec<ShapeMark>,
+    pub images: Vec<ImageMark>,
+    pub marks: Vec<TextMark>,
+}
+
+impl OverlayPage {
+    pub fn empty(width: f32, height: f32) -> Self {
+        OverlayPage { width, height, ..Default::default() }
+    }
+}
+
+/// Imagem preparada para a camada (assinatura escaneada, logotipo).
+pub struct OverlayImage {
+    img: PdfImage,
+}
+
+/// Lado maior da imagem quando o fundo branco é removido (a imagem precisa
+/// ser decodificada e recomprimida; assinaturas não precisam de mais).
+const KNOCKOUT_MAX_SIDE: u32 = 2000;
+
+impl OverlayImage {
+    /// Carrega a imagem. Com `remove_white`, o papel claro de uma assinatura
+    /// fotografada ou escaneada vira transparente (claro → transparente,
+    /// escuro → opaco, com transição suave para não serrilhar o traço).
+    pub fn load(path: &Path, remove_white: bool) -> OpResult<Self> {
+        if !remove_white {
+            return Ok(OverlayImage { img: load_image(path)? });
+        }
+        let rgba = decode_rgba(path, KNOCKOUT_MAX_SIDE, true)?;
+        let (width, height) = rgba.dimensions();
+        let mut rgb = Vec::with_capacity((width * height * 3) as usize);
+        let mut alpha = Vec::with_capacity((width * height) as usize);
+        for p in rgba.pixels() {
+            rgb.extend_from_slice(&p.0[..3]);
+            alpha.push(p.0[3]);
+        }
+        Ok(OverlayImage {
+            img: PdfImage {
+                width,
+                height,
+                color_space: "/DeviceRGB",
+                filter: "/FlateDecode",
+                data: deflate(&rgb).map_err(write_err)?,
+                alpha: Some(deflate(&alpha).map_err(write_err)?),
+                orientation: Orientation::NoTransforms,
+            },
+        })
+    }
+
+    /// Largura ÷ altura da imagem exibida.
+    pub fn aspect(&self) -> f32 {
+        let (w, h) = (self.img.width as f32, self.img.height as f32);
+        if orientation_matrix(self.img.orientation).1 { h / w } else { w / h }
+    }
+}
+
+/// Decodifica a imagem já na orientação exibida, com lado maior de no máximo
+/// `max_side` px e, se pedido, com o fundo claro removido (`knockout_alpha`).
+/// Também usada pela interface para desenhar a prévia da assinatura.
+pub fn decode_rgba(path: &Path, max_side: u32, remove_white: bool) -> OpResult<image::RgbaImage> {
+    let unsupported = |detail: String| OpError::UnsupportedImage { file: path.to_path_buf(), detail };
+    let reader = ImageReader::open(path)
+        .map_err(|e| OpError::io_path("ler", path, e))?
+        .with_guessed_format()
+        .map_err(|e| unsupported(e.to_string()))?;
+    let mut decoder = reader.into_decoder().map_err(|e| unsupported(e.to_string()))?;
+    let orientation = decoder.orientation().unwrap_or(Orientation::NoTransforms);
+    let mut img = DynamicImage::from_decoder(decoder).map_err(|e| unsupported(e.to_string()))?;
+    img.apply_orientation(orientation);
+    if img.width().max(img.height()) > max_side {
+        img = img.resize(max_side, max_side, image::imageops::FilterType::Triangle);
+    }
+    let mut rgba = img.into_rgba8();
+    if remove_white {
+        for p in rgba.pixels_mut() {
+            p.0[3] = knockout_alpha(p.0);
+        }
+    }
+    Ok(rgba)
+}
+
+/// Opacidade de um pixel com o fundo claro removido.
+fn knockout_alpha([r, g, b, a]: [u8; 4]) -> u8 {
+    const PAPER: f32 = 225.0;
+    const INK: f32 = 160.0;
+    let lum = 0.299 * r as f32 + 0.587 * g as f32 + 0.114 * b as f32;
+    let k = ((PAPER - lum) / (PAPER - INK)).clamp(0.0, 1.0);
+    (k * a as f32).round() as u8
+}
+
+/// Gera o PDF de camada usado com `qpdf --overlay`: uma página por página do
+/// documento, do mesmo tamanho exibido, só com as marcas (fundo transparente).
+pub fn overlay_pdf(out: &Path, pages: &[OverlayPage]) -> io::Result<()> {
+    overlay_pdf_with_images(out, pages, &[])
+}
+
+/// Como `overlay_pdf`, com as imagens citadas pelos `ImageMark` das páginas.
+/// Cada imagem é gravada uma vez, mesmo que apareça em várias páginas.
+pub fn overlay_pdf_with_images(out: &Path, pages: &[OverlayPage], images: &[OverlayImage]) -> io::Result<()> {
+    let mut w = Writer::create(out)?;
+    let catalog = w.alloc();
+    let tree = w.alloc();
+    let regular = w.alloc();
+    let bold = w.alloc();
+    w.obj(regular, "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica /Encoding /WinAnsiEncoding >>")?;
+    w.obj(bold, "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica-Bold /Encoding /WinAnsiEncoding >>")?;
+    let mut image_ids = Vec::with_capacity(images.len());
+    for OverlayImage { img } in images {
+        let smask = match &img.alpha {
+            Some(alpha) => {
+                let id = w.alloc();
+                let dict = format!(
+                    "/Type /XObject /Subtype /Image /Width {} /Height {} /ColorSpace /DeviceGray \
+                     /BitsPerComponent 8 /Filter /FlateDecode",
+                    img.width, img.height
+                );
+                w.stream(id, &dict, alpha)?;
+                format!(" /SMask {id} 0 R")
+            }
+            None => String::new(),
+        };
+        let id = w.alloc();
+        let dict = format!(
+            "/Type /XObject /Subtype /Image /Width {} /Height {} /ColorSpace {} /BitsPerComponent 8 /Filter {}{smask}",
+            img.width, img.height, img.color_space, img.filter
+        );
+        w.stream(id, &dict, &img.data)?;
+        image_ids.push(id);
+    }
+    let mut ids = Vec::new();
+    for page in pages {
+        let mut content = String::new();
+        let mut states = Vec::new();
+        let mut state = |opacity: f32, multiply: bool| -> String {
+            if opacity >= 1.0 && !multiply {
+                return String::new();
+            }
+            let i = states.len();
+            let blend = if multiply { " /BM /Multiply" } else { "" };
+            states.push(format!("/G{i} << /Type /ExtGState /ca {0} /CA {0}{blend} >>", fmt_num(opacity.min(1.0))));
+            format!("/G{i} gs ")
+        };
+        for s in &page.shapes {
+            let gs = state(s.opacity, s.multiply);
+            let mut ops = String::new();
+            if let Some((r, g, b)) = s.fill {
+                ops.push_str(&format!("{} {} {} rg ", fmt_num(r), fmt_num(g), fmt_num(b)));
+            }
+            if let Some((r, g, b)) = s.stroke {
+                ops.push_str(&format!("{} {} {} RG {} w ", fmt_num(r), fmt_num(g), fmt_num(b), fmt_num(s.line_width)));
+            }
+            let paint = match (s.fill.is_some(), s.stroke.is_some()) {
+                (true, true) => "B",
+                (true, false) => "f",
+                (false, true) => "S",
+                (false, false) => "n",
+            };
+            // A moldura fica do lado de dentro da caixa.
+            let inset = if s.stroke.is_some() { s.line_width / 2.0 } else { 0.0 };
+            content.push_str(&format!(
+                "q {gs}{ops}{} {} {} {} re {paint} Q\n",
+                fmt_num(s.x + inset),
+                fmt_num(s.y + inset),
+                fmt_num((s.w - 2.0 * inset).max(0.0)),
+                fmt_num((s.h - 2.0 * inset).max(0.0)),
+            ));
+        }
+        let mut used_images = Vec::new();
+        for m in &page.images {
+            let Some(OverlayImage { img }) = images.get(m.image) else { continue };
+            if !used_images.contains(&m.image) {
+                used_images.push(m.image);
+            }
+            let gs = state(m.opacity, false);
+            let matrix: Vec<String> = orientation_matrix(img.orientation).0.iter().map(|&v| fmt_num(v)).collect();
+            content.push_str(&format!(
+                "q {gs}{} 0 0 {} {} {} cm {} cm /Im{} Do Q\n",
+                fmt_num(m.w),
+                fmt_num(m.h),
+                fmt_num(m.x),
+                fmt_num(m.y),
+                matrix.join(" "),
+                m.image
+            ));
+        }
+        for m in &page.marks {
+            let escaped: String = m
+                .text
+                .iter()
+                .map(|&b| match b {
+                    b'(' | b')' | b'\\' => format!("\\{}", b as char),
+                    32..=126 => (b as char).to_string(),
+                    _ => format!("\\{b:03o}"),
+                })
+                .collect();
+            let (sin, cos) = m.angle.to_radians().sin_cos();
+            let gs = state(m.opacity, false);
+            content.push_str(&format!(
+                "q {gs}{} {} {} rg BT /{} {} Tf {} {} {} {} {} {} Tm ({escaped}) Tj ET Q\n",
+                fmt_num(m.color.0),
+                fmt_num(m.color.1),
+                fmt_num(m.color.2),
+                if m.bold { "F2" } else { "F1" },
+                fmt_num(m.size),
+                fmt_num(cos),
+                fmt_num(sin),
+                fmt_num(-sin),
+                fmt_num(cos),
+                fmt_num(m.x),
+                fmt_num(m.y),
+            ));
+        }
+        let content_id = w.alloc();
+        w.stream(content_id, "", content.as_bytes())?;
+        let page_id = w.alloc();
+        let ext = if states.is_empty() { String::new() } else { format!(" /ExtGState << {} >>", states.join(" ")) };
+        let xobj = if used_images.is_empty() {
+            String::new()
+        } else {
+            let list: Vec<String> = used_images.iter().map(|&i| format!("/Im{i} {} 0 R", image_ids[i])).collect();
+            format!(" /XObject << {} >>", list.join(" "))
+        };
+        w.obj(
+            page_id,
+            &format!(
+                "<< /Type /Page /Parent {tree} 0 R /MediaBox [0 0 {} {}] \
+                 /Resources << /Font << /F1 {regular} 0 R /F2 {bold} 0 R >>{ext}{xobj} >> /Contents {content_id} 0 R >>",
+                fmt_num(page.width),
+                fmt_num(page.height)
+            ),
+        )?;
+        ids.push(page_id);
+    }
+    let info = write_tree(&mut w, catalog, tree, &ids)?;
+    w.finish(catalog, info)
+}
+
+/// Palavra da camada de texto invisível do OCR, em pontos (origem no canto
+/// inferior esquerdo): começa em `x` sobre a linha de base `baseline` e ocupa
+/// `width` na horizontal.
+#[derive(Debug, Clone, PartialEq)]
+pub struct InvisibleWord {
+    pub text: String,
+    pub x: f32,
+    pub baseline: f32,
+    pub width: f32,
+    pub size: f32,
+}
+
+/// Página da camada do OCR. `width` × `height` é a página como exibida;
+/// as palavras estão no sistema da imagem depois de girada `rotation` graus
+/// (sentido horário) para o texto ficar de pé.
+#[derive(Debug, Clone, PartialEq, Default)]
+pub struct InvisiblePage {
+    pub width: f32,
+    pub height: f32,
+    pub rotation: u32,
+    pub words: Vec<InvisibleWord>,
+}
+
+impl InvisiblePage {
+    /// Matriz que leva o sistema da imagem endireitada ao da página.
+    fn upright_matrix(&self) -> Option<String> {
+        let (w, h) = (fmt_num(self.width), fmt_num(self.height));
+        match self.rotation {
+            90 => Some(format!("0 1 -1 0 {w} 0")),
+            180 => Some(format!("-1 0 0 -1 {w} {h}")),
+            270 => Some(format!("0 -1 1 0 0 {h}")),
+            _ => None,
+        }
+    }
+}
+
+/// Largura de cada caractere da fonte sem desenho, em milésimos do corpo.
+const GLYPHLESS_WIDTH: f32 = 500.0;
+
+/// Texto em UTF-16BE hexadecimal (os CIDs da fonte são as unidades UTF-16).
+fn utf16_hex(text: &str) -> (String, usize) {
+    let units: Vec<u16> = text.encode_utf16().collect();
+    (units.iter().map(|u| format!("{u:04X}")).collect(), units.len())
+}
+
+/// PDF de camada com texto invisível (modo de renderização 3): selecionável
+/// e pesquisável, sem desenhar nada. Usa a fonte sem desenho do Tesseract
+/// (`glyphless_font`), com CID = unidade UTF-16 e ToUnicode identidade, de
+/// modo que qualquer caractere reconhecido é preservado. Cada palavra é
+/// esticada (`Tz`) para cobrir a largura dela na imagem.
+pub fn invisible_text_pdf(out: &Path, pages: &[InvisiblePage], glyphless_font: &[u8]) -> io::Result<()> {
+    let mut w = Writer::create(out)?;
+    let catalog = w.alloc();
+    let tree = w.alloc();
+    let font_file = w.alloc();
+    w.stream(font_file, &format!("/Length1 {}", glyphless_font.len()), glyphless_font)?;
+    let descriptor = w.alloc();
+    w.obj(
+        descriptor,
+        &format!(
+            "<< /Type /FontDescriptor /FontName /GlyphLessFont /Flags 5 /FontBBox [0 0 {GLYPHLESS_WIDTH} 1000] \
+             /ItalicAngle 0 /Ascent 1000 /Descent 0 /CapHeight 1000 /StemV 80 /FontFile2 {font_file} 0 R >>"
+        ),
+    )?;
+    // Todos os CIDs apontam para o glifo 1 (vazio) da fonte.
+    let gid_map: Vec<u8> = std::iter::repeat_n([0u8, 1u8], 65536).flatten().collect();
+    let map = w.alloc();
+    w.stream(map, "/Filter /FlateDecode", &deflate(&gid_map)?)?;
+    let cid_font = w.alloc();
+    w.obj(
+        cid_font,
+        &format!(
+            "<< /Type /Font /Subtype /CIDFontType2 /BaseFont /GlyphLessFont \
+             /CIDSystemInfo << /Registry (Adobe) /Ordering (Identity) /Supplement 0 >> \
+             /FontDescriptor {descriptor} 0 R /DW {GLYPHLESS_WIDTH} /CIDToGIDMap {map} 0 R >>"
+        ),
+    )?;
+    let mut cmap = String::from(
+        "/CIDInit /ProcSet findresource begin\n12 dict begin\nbegincmap\n\
+         /CIDSystemInfo << /Registry (Adobe) /Ordering (UCS) /Supplement 0 >> def\n\
+         /CMapName /Adobe-Identity-UCS def\n/CMapType 2 def\n\
+         1 begincodespacerange\n<0000> <FFFF>\nendcodespacerange\n",
+    );
+    // Faixas de no máximo 256 códigos: o destino só incrementa o último byte.
+    for chunk in (0..256u32).collect::<Vec<_>>().chunks(100) {
+        cmap.push_str(&format!("{} beginbfrange\n", chunk.len()));
+        for hi in chunk {
+            cmap.push_str(&format!("<{hi:02X}00> <{hi:02X}FF> <{hi:02X}00>\n"));
+        }
+        cmap.push_str("endbfrange\n");
+    }
+    cmap.push_str("endcmap\nCMapName currentdict /CMap defineresource pop\nend\nend\n");
+    let to_unicode = w.alloc();
+    w.stream(to_unicode, "/Filter /FlateDecode", &deflate(cmap.as_bytes())?)?;
+    let font = w.alloc();
+    w.obj(
+        font,
+        &format!(
+            "<< /Type /Font /Subtype /Type0 /BaseFont /GlyphLessFont /Encoding /Identity-H \
+             /DescendantFonts [{cid_font} 0 R] /ToUnicode {to_unicode} 0 R >>"
+        ),
+    )?;
+    let mut ids = Vec::new();
+    for page in pages {
+        let mut content = match page.upright_matrix() {
+            Some(m) => format!("q {m} cm\nBT 3 Tr\n"),
+            None => String::from("q\nBT 3 Tr\n"),
+        };
+        for word in &page.words {
+            let (hex, units) = utf16_hex(&word.text);
+            if units == 0 || word.size <= 0.0 {
+                continue;
+            }
+            let natural = units as f32 * GLYPHLESS_WIDTH / 1000.0 * word.size;
+            let stretch = (100.0 * word.width / natural).clamp(1.0, 10_000.0);
+            content.push_str(&format!(
+                "/F1 {} Tf {} Tz 1 0 0 1 {} {} Tm <{hex}> Tj\n",
+                fmt_num(word.size),
+                fmt_num(stretch),
+                fmt_num(word.x),
+                fmt_num(word.baseline)
+            ));
+        }
+        content.push_str("ET Q\n");
+        let content_id = w.alloc();
+        w.stream(content_id, "/Filter /FlateDecode", &deflate(content.as_bytes())?)?;
+        let page_id = w.alloc();
+        w.obj(
+            page_id,
+            &format!(
+                "<< /Type /Page /Parent {tree} 0 R /MediaBox [0 0 {} {}] \
+                 /Resources << /Font << /F1 {font} 0 R >> >> /Contents {content_id} 0 R >>",
+                fmt_num(page.width),
+                fmt_num(page.height)
+            ),
+        )?;
+        ids.push(page_id);
+    }
+    let info = write_tree(&mut w, catalog, tree, &ids)?;
+    w.finish(catalog, info)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

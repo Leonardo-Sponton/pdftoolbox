@@ -152,3 +152,85 @@ fn render_pages(
     results.sort_by_key(|(p, _)| *p);
     Ok(results)
 }
+
+/// Extrai o texto de cada PDF para um `.txt` (UTF-8) ao lado.
+pub fn extract_text(inputs: &[PathBuf], layout: bool, dest: &Destination, ctx: &JobCtx) -> OpResult<Outcome> {
+    let n = inputs.len();
+    batch(inputs, |i, input, outcome| {
+        ctx.report(i as f64 / n as f64, &format!("Extraindo texto de {}", stem(input)));
+        qpdf::page_count(input, &ctx.cancel)?;
+        let job = JobDir::new()?;
+        let tmp = job.file("texto.txt");
+        poppler::extract_text(input, &tmp, layout, &ctx.cancel)?;
+        let text = std::fs::read(&tmp).map_err(|e| OpError::io("ler o texto extraído", e))?;
+        // pdftotext separa páginas com form feed; sem nada além disso, não há texto.
+        if text.iter().all(|b| b.is_ascii_whitespace() || *b == 0x0C) {
+            outcome.notes.push(format!(
+                "“{}” não tem texto selecionável — provavelmente é uma digitalização (imagem). \
+                 Nenhum arquivo foi criado; use antes a ferramenta “OCR — reconhecer texto”.",
+                crate::error::display_name(input)
+            ));
+            return Ok(());
+        }
+        let name = if n == 1 {
+            output_name(dest, &stem(input), "txt")
+        } else {
+            storage::sanitize_file_name(&stem(input), "txt")
+        };
+        outcome.push(storage::commit(&tmp, &dest.dir, &name)?);
+        Ok(())
+    })
+}
+
+/// Extensões aceitas pela conversão de documentos de escritório.
+pub const OFFICE_EXTENSIONS: &[&str] =
+    &["doc", "docx", "odt", "rtf", "txt", "xls", "xlsx", "ods", "csv", "ppt", "pptx", "odp"];
+
+/// Converte documentos, planilhas e apresentações em PDF com o LibreOffice.
+pub fn office_to_pdf(inputs: &[PathBuf], dest: &Destination, ctx: &JobCtx) -> OpResult<Outcome> {
+    let n = inputs.len();
+    let mut isolated_all = true;
+    let mut outcome = batch(inputs, |i, input, outcome| {
+        ctx.report(
+            (i as f64 + 0.1) / n as f64,
+            &format!(
+                "Convertendo {} ({} de {n}) — a primeira conversão pode levar alguns segundos",
+                stem(input),
+                i + 1
+            ),
+        );
+        std::fs::File::open(input).map_err(|e| OpError::io_path("abrir", input, e))?;
+        let job = JobDir::new()?;
+        let profile = job.subdir("perfil")?;
+        let out_dir = job.subdir("saida")?;
+        // Cópia com nome simples: o LibreOffice deriva o nome de saída do de
+        // entrada e não lida bem com alguns caracteres.
+        let ext = input.extension().map(|e| e.to_string_lossy().to_lowercase()).unwrap_or_default();
+        let source = job.file(&format!("documento.{ext}"));
+        std::fs::copy(input, &source).map_err(|e| OpError::io_path("ler", input, e))?;
+        let (pdf, isolated) = crate::engines::libreoffice::to_pdf(&source, &out_dir, &profile, &ctx.cancel)?;
+        isolated_all &= isolated;
+        let pages = qpdf::page_count(&pdf, &ctx.cancel).map_err(|e| match e {
+            OpError::Cancelled => e,
+            other => OpError::OutputInvalid(format!("o PDF gerado não pôde ser lido ({})", other.technical())),
+        })?;
+        if pages == 0 {
+            return Err(OpError::OutputInvalid("o PDF gerado não tem páginas".into()));
+        }
+        let name = if n == 1 {
+            output_name(dest, &stem(input), "pdf")
+        } else {
+            storage::sanitize_file_name(&stem(input), "pdf")
+        };
+        outcome.push(storage::commit(&pdf, &dest.dir, &name)?);
+        Ok(())
+    })?;
+    if !isolated_all && !outcome.outputs.is_empty() {
+        outcome.notes.push(
+            "Este sistema não permite isolar a conversão da rede (namespaces sem privilégios desativados). \
+             O LibreOffice não costuma acessar a internet ao converter, mas o isolamento não pôde ser garantido."
+                .into(),
+        );
+    }
+    Ok(outcome)
+}

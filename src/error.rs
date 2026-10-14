@@ -12,15 +12,43 @@ pub type OpResult<T> = Result<T, OpError>;
 pub enum OpError {
     NoInput,
     MissingTool(Tool),
-    InvalidPdf { file: PathBuf, detail: String },
+    InvalidPdf {
+        file: PathBuf,
+        detail: String,
+    },
     PasswordProtected(PathBuf),
-    UnsupportedImage { file: PathBuf, detail: String },
+    /// A senha informada não abre o documento.
+    WrongPassword(PathBuf),
+    /// A senha abre o documento, mas não é a de permissões, e o autor
+    /// restringiu impressão, cópia ou edição.
+    OwnerPasswordRequired(PathBuf),
+    /// Remover senha de um arquivo que não tem senha.
+    NotEncrypted(PathBuf),
+    UnsupportedImage {
+        file: PathBuf,
+        detail: String,
+    },
     InvalidRange(String),
-    PageOutOfRange { page: u32, total: u32 },
+    PageOutOfRange {
+        page: u32,
+        total: u32,
+    },
     EmptySelection,
-    Io { context: String, source: io::Error },
-    ToolFailed { tool: Tool, code: Option<i32>, stderr: String },
+    Io {
+        context: String,
+        source: io::Error,
+    },
+    ToolFailed {
+        tool: Tool,
+        code: Option<i32>,
+        stderr: String,
+    },
     OutputInvalid(String),
+    /// Dados do idioma do OCR não instalados (nome do idioma, comando).
+    MissingOcrLanguage {
+        language: &'static str,
+        install: String,
+    },
     Cancelled,
 }
 
@@ -36,9 +64,12 @@ impl OpError {
     pub fn title(&self) -> &'static str {
         match self {
             OpError::NoInput => "Nenhum arquivo selecionado",
-            OpError::MissingTool(_) => "Dependência ausente",
+            OpError::MissingTool(_) | OpError::MissingOcrLanguage { .. } => "Dependência ausente",
             OpError::InvalidPdf { .. } => "Documento inválido",
             OpError::PasswordProtected(_) => "Documento protegido por senha",
+            OpError::WrongPassword(_) => "Senha incorreta",
+            OpError::OwnerPasswordRequired(_) => "É preciso a senha de permissões",
+            OpError::NotEncrypted(_) => "O documento não tem senha",
             OpError::UnsupportedImage { .. } => "Imagem não suportada",
             OpError::InvalidRange(_) | OpError::PageOutOfRange { .. } | OpError::EmptySelection => {
                 "Seleção de páginas inválida"
@@ -116,10 +147,24 @@ impl fmt::Display for OpError {
             }
             OpError::PasswordProtected(file) => write!(
                 f,
-                "“{}” está protegido por senha. Esta versão ainda não abre documentos com senha \
-                 de abertura; remova a proteção com o programa que a criou e tente de novo.",
+                "“{}” está protegido por senha. Use a ferramenta “Remover senha” com a senha do \
+                 documento e depois aplique esta ferramenta à cópia desbloqueada.",
                 display_name(file)
             ),
+            OpError::WrongPassword(file) => write!(
+                f,
+                "A senha informada não abre “{}”. Confira maiúsculas, minúsculas e acentos.",
+                display_name(file)
+            ),
+            OpError::OwnerPasswordRequired(file) => write!(
+                f,
+                "A senha informada abre “{}”, mas o autor restringiu impressão, cópia ou edição. \
+                 Para remover a proteção é preciso a senha de permissões (do proprietário).",
+                display_name(file)
+            ),
+            OpError::NotEncrypted(file) => {
+                write!(f, "“{}” não está protegido por senha; não há o que remover.", display_name(file))
+            }
             OpError::UnsupportedImage { file, .. } => write!(
                 f,
                 "Não foi possível ler “{}” como imagem. Formatos aceitos: JPEG, PNG, BMP, GIF, WebP e TIFF.",
@@ -151,6 +196,11 @@ impl fmt::Display for OpError {
             OpError::OutputInvalid(msg) => {
                 write!(f, "O arquivo gerado não passou na verificação e foi descartado: {msg}")
             }
+            OpError::MissingOcrLanguage { language, install } => write!(
+                f,
+                "O reconhecimento em {language} precisa dos dados desse idioma para o Tesseract, que não estão \
+                 instalados. Instale com: {install}"
+            ),
             OpError::Cancelled => write!(f, "A operação foi cancelada. Nenhum arquivo foi criado."),
         }
     }

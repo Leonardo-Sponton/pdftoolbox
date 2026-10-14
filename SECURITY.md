@@ -9,7 +9,16 @@
   argumentos de rede.)
 - **Arquivos são dados, não código.** Nenhum script, anexo ou ação incorporada
   ao PDF é executado. O Ghostscript roda com `-dSAFER`; qpdf e Poppler não
-  executam conteúdo.
+  executam conteúdo. Na conversão de documentos do Office, o LibreOffice usa um
+  perfil novo e descartável por tarefa, cujo nível de segurança padrão (alto)
+  bloqueia macros não assinadas. O Tesseract (OCR) só recebe imagens
+  renderizadas pelo Poppler, nunca o PDF.
+- **LibreOffice sem rede.** Um documento pode citar imagens ou vínculos
+  externos. Quando o sistema permite namespaces sem privilégios (padrão na
+  maioria das distribuições), o LibreOffice roda dentro de
+  `unshare --user --map-current-user --net`, sem nenhuma interface de rede
+  (verificado: o processo fica num namespace de rede próprio). Se o sistema
+  não permitir, a ferramenta avisa antes (na descrição) e depois (no resultado).
 - **Sem shell.** Programas externos são executados com argumentos separados
   (`std::process::Command`), nunca concatenando nomes de arquivo em uma linha
   de comando. Caminhos são sempre absolutos, então nomes iniciados por “-” não
@@ -23,6 +32,17 @@
 - **Temporários isolados.** Cada tarefa usa `~/.cache/pdftoolbox/tarefas/<id>`
   com permissão 0700, apagada ao terminar, falhar ou ser cancelada. Pastas de
   processos encerrados de forma anormal são removidas na próxima inicialização.
+- **Senhas.** Ficam só na memória do processo, num tipo que não aparece em
+  `Debug` e é zerado ao ser descartado. São entregues ao qpdf por arquivos
+  0600 dentro da pasta temporária da tarefa (nunca como argumento de linha de
+  comando, que seria visível em `ps`), apagados ao fim. Não são guardadas nas
+  preferências nem nos detalhes de erro.
+- **Sem contorno de senhas.** “Remover senha” exige a senha do documento. Se o
+  autor restringiu impressão, cópia ou edição, só a senha de permissões
+  (proprietário) remove as restrições — a senha de abertura não basta. Não há
+  tentativa de adivinhar ou quebrar senhas.
+- **Processos encerrados de verdade.** Cancelar ou fechar o programa encerra o
+  grupo de processos de cada motor, incluindo processos filhos.
 - **Logs.** O programa não grava logs em disco. Os detalhes técnicos mostrados
   em falhas contêm só a saída de erro do motor (que pode incluir o nome do
   arquivo), nunca o conteúdo do documento.
@@ -42,8 +62,12 @@
 - Não há sandbox adicional (seccomp/bubblewrap) em torno dos motores; o
   isolamento é o de processo comum do usuário. Planejado para a distribuição
   em Flatpak.
-- Documentos com senha de abertura são recusados; o programa não tenta
-  contornar senhas e nunca o fará.
+- Documentos com senha de abertura só são aceitos por “Remover senha” (com a
+  senha); as demais ferramentas os recusam com orientação. O programa não
+  tenta contornar senhas e nunca o fará.
+- PDFs que só têm restrições do autor (abrem sem senha) ainda são aceitos
+  pelas ferramentas estruturais da Fase 1 (o qpdf preserva a criptografia na
+  saída); Editar metadados e Proteger os recusam.
 - Redação definitiva e assinatura digital ainda não existem; quando existirem,
   serão testadas quanto à recuperação do conteúdo removido.
 

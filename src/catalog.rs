@@ -14,23 +14,37 @@ pub enum ToolId {
     ImagesToPdf,
     PdfToImages,
     Compress,
+    NumberPages,
+    Watermark,
+    Metadata,
+    Protect,
+    Unlock,
+    PdfToText,
+    OfficeToPdf,
+    Annotate,
+    Ocr,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Category {
     Organize,
+    Edit,
     Convert,
     Compress,
+    Security,
 }
 
 impl Category {
-    pub const ALL: [Category; 3] = [Category::Organize, Category::Convert, Category::Compress];
+    pub const ALL: [Category; 5] =
+        [Category::Organize, Category::Edit, Category::Convert, Category::Compress, Category::Security];
 
     pub fn title(self) -> &'static str {
         match self {
             Category::Organize => "Organizar",
+            Category::Edit => "Editar",
             Category::Convert => "Converter",
             Category::Compress => "Comprimir",
+            Category::Security => "Segurança",
         }
     }
 }
@@ -39,6 +53,8 @@ impl Category {
 pub enum Accepts {
     Pdf,
     Images,
+    /// Documentos, planilhas e apresentações (LibreOffice).
+    Office,
 }
 
 pub struct ToolInfo {
@@ -174,6 +190,125 @@ pub const TOOLS: &[ToolInfo] = &[
         needs: &[Tool::Qpdf],
         keywords: "reduzir diminuir tamanho otimizar compactar",
     },
+    ToolInfo {
+        id: ToolId::NumberPages,
+        key: "numerar",
+        title: "Numerar páginas",
+        summary: "Escreva o número em cada página, na posição e no formato que escolher",
+        icon: "pdftoolbox-numerar-symbolic",
+        category: Category::Edit,
+        accepts: Accepts::Pdf,
+        multiple: true,
+        min_files: 1,
+        needs: &[Tool::Qpdf, Tool::Pdfinfo],
+        keywords: "numeração número paginação rodapé cabeçalho contar",
+    },
+    ToolInfo {
+        id: ToolId::Watermark,
+        key: "marca-dagua",
+        title: "Marca d’água",
+        summary: "Escreva um texto semitransparente sobre as páginas, como “CONFIDENCIAL”",
+        icon: "pdftoolbox-marca-dagua-symbolic",
+        category: Category::Edit,
+        accepts: Accepts::Pdf,
+        multiple: true,
+        min_files: 1,
+        needs: &[Tool::Qpdf, Tool::Pdfinfo],
+        keywords: "marca dagua carimbo confidencial rascunho texto sobreposto",
+    },
+    ToolInfo {
+        id: ToolId::Annotate,
+        key: "anotar",
+        title: "Anotar e assinar",
+        summary: "Escreva textos, destaque trechos e coloque a imagem da sua assinatura nas páginas",
+        icon: "pdftoolbox-anotar-symbolic",
+        category: Category::Edit,
+        accepts: Accepts::Pdf,
+        multiple: false,
+        min_files: 1,
+        needs: &[Tool::Qpdf, Tool::Pdfinfo, Tool::Pdftoppm],
+        keywords: "assinatura assinar rubrica anotação comentário escrever texto destacar marca-texto \
+                   carimbo preencher formulário imagem logotipo moldura",
+    },
+    ToolInfo {
+        id: ToolId::Metadata,
+        key: "metadados",
+        title: "Editar metadados",
+        summary: "Veja e altere título, autor, assunto e palavras-chave, ou apague tudo",
+        icon: "pdftoolbox-metadados-symbolic",
+        category: Category::Edit,
+        accepts: Accepts::Pdf,
+        multiple: false,
+        min_files: 1,
+        needs: &[Tool::Qpdf, Tool::Pdfinfo],
+        keywords: "propriedades título autor assunto palavras-chave informações limpar privacidade",
+    },
+    ToolInfo {
+        id: ToolId::PdfToText,
+        key: "pdf-para-texto",
+        title: "PDF para texto",
+        summary: "Extraia o texto selecionável para um arquivo .txt",
+        icon: "pdftoolbox-pdf-para-texto-symbolic",
+        category: Category::Convert,
+        accepts: Accepts::Pdf,
+        multiple: true,
+        min_files: 1,
+        needs: &[Tool::Qpdf, Tool::Pdftotext],
+        keywords: "txt extrair texto copiar conteúdo",
+    },
+    ToolInfo {
+        id: ToolId::Ocr,
+        key: "ocr",
+        title: "OCR — reconhecer texto",
+        summary: "Torne pesquisável e copiável o texto de documentos digitalizados (português e inglês)",
+        icon: "pdftoolbox-ocr-symbolic",
+        category: Category::Convert,
+        accepts: Accepts::Pdf,
+        multiple: true,
+        min_files: 1,
+        needs: &[Tool::Qpdf, Tool::Pdftoppm, Tool::Pdftotext, Tool::Tesseract],
+        keywords: "ocr reconhecimento texto digitalização digitalizado escaneado scanner foto pesquisável busca \
+                   tesseract copiar",
+    },
+    ToolInfo {
+        id: ToolId::OfficeToPdf,
+        key: "office-para-pdf",
+        title: "Office para PDF",
+        summary: "Converta documentos, planilhas e apresentações (Word, Excel, PowerPoint, LibreOffice)",
+        icon: "pdftoolbox-office-para-pdf-symbolic",
+        category: Category::Convert,
+        accepts: Accepts::Office,
+        multiple: true,
+        min_files: 1,
+        needs: &[Tool::LibreOffice, Tool::Qpdf],
+        keywords: "word excel powerpoint docx xlsx pptx odt ods odp doc xls ppt rtf csv txt documento planilha apresentação",
+    },
+    ToolInfo {
+        id: ToolId::Protect,
+        key: "proteger",
+        title: "Proteger com senha",
+        summary: "Exija senha para abrir o PDF (AES-256) e, se quiser, restrinja impressão e cópia",
+        icon: "pdftoolbox-proteger-symbolic",
+        category: Category::Security,
+        accepts: Accepts::Pdf,
+        multiple: true,
+        min_files: 1,
+        needs: &[Tool::Qpdf],
+        keywords: "senha criptografar proteger bloquear segurança cadeado",
+    },
+    ToolInfo {
+        id: ToolId::Unlock,
+        key: "remover-senha",
+        title: "Remover senha",
+        summary: "Salve uma cópia sem senha de um PDF cuja senha você conhece",
+        icon: "pdftoolbox-remover-senha-symbolic",
+        category: Category::Security,
+        accepts: Accepts::Pdf,
+        multiple: true,
+        min_files: 1,
+        needs: &[Tool::Qpdf],
+        keywords: "desbloquear senha descriptografar destravar tirar proteção",
+    },
 ];
 
 pub fn info(id: ToolId) -> &'static ToolInfo {
@@ -207,11 +342,13 @@ pub fn matches(tool: &ToolInfo, query: &str) -> bool {
 
 pub const PDF_EXTENSIONS: &[&str] = &["pdf"];
 pub const IMAGE_EXTENSIONS: &[&str] = &["jpg", "jpeg", "png", "webp", "gif", "bmp", "tif", "tiff"];
+pub use crate::operations::OFFICE_EXTENSIONS;
 
 pub fn extension_ok(accepts: Accepts, path: &std::path::Path) -> bool {
     let ext = path.extension().map(|e| e.to_string_lossy().to_lowercase()).unwrap_or_default();
     match accepts {
         Accepts::Pdf => PDF_EXTENSIONS.contains(&ext.as_str()),
         Accepts::Images => IMAGE_EXTENSIONS.contains(&ext.as_str()),
+        Accepts::Office => OFFICE_EXTENSIONS.contains(&ext.as_str()),
     }
 }

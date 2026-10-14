@@ -4,14 +4,24 @@
 
 mod compress;
 mod convert;
+mod edit;
+mod ocr;
 mod organize;
+mod security;
 
 use std::path::{Path, PathBuf};
 
+pub use crate::annotate::{Annotation, Kind as AnnotationKind};
 pub use crate::engines::poppler::ImageFormat;
 pub use crate::pdfwriter::{ImageLayout, PageSize};
+pub use crate::secret::Secret;
+pub use crate::stamp::{NumberFormat, NumberStyle, Position, WatermarkStyle};
 pub use compress::CompressLevel;
+pub use convert::OFFICE_EXTENSIONS;
+pub use edit::{DocFields, MetadataChange, unsupported_chars};
+pub use ocr::{OcrLanguage, OcrOptions, text_pages};
 pub use organize::PageItem;
+pub use security::Restrictions;
 
 use crate::engines::qpdf;
 use crate::error::{OpError, OpResult};
@@ -47,6 +57,15 @@ pub enum Request {
     ImagesToPdf { inputs: Vec<PathBuf>, layout: ImageLayout, one_file: bool },
     PdfToImages { inputs: Vec<PathBuf>, format: ImageFormat, dpi: u32, quality: u8 },
     Compress { inputs: Vec<PathBuf>, level: CompressLevel },
+    NumberPages { inputs: Vec<PathBuf>, spec: Option<String>, style: NumberStyle },
+    Watermark { inputs: Vec<PathBuf>, spec: Option<String>, style: WatermarkStyle },
+    Metadata { input: PathBuf, change: MetadataChange },
+    Protect { inputs: Vec<PathBuf>, password: Secret, restrictions: Option<Restrictions> },
+    Unlock { inputs: Vec<PathBuf>, password: Secret },
+    ExtractText { inputs: Vec<PathBuf>, layout: bool },
+    OfficeToPdf { inputs: Vec<PathBuf> },
+    Annotate { input: PathBuf, items: Vec<Annotation> },
+    Ocr { inputs: Vec<PathBuf>, options: OcrOptions },
 }
 
 #[derive(Debug, Clone)]
@@ -91,6 +110,17 @@ pub fn execute(req: Request, dest: &Destination, ctx: &JobCtx) -> OpResult<Outco
             convert::pdf_to_images(&inputs, format, dpi, quality, dest, ctx)
         }
         Request::Compress { inputs, level } => compress::compress(&inputs, level, dest, ctx),
+        Request::NumberPages { inputs, spec, style } => edit::number_pages(&inputs, spec.as_deref(), &style, dest, ctx),
+        Request::Watermark { inputs, spec, style } => edit::watermark(&inputs, spec.as_deref(), &style, dest, ctx),
+        Request::Metadata { input, change } => edit::metadata(&input, &change, dest, ctx),
+        Request::Protect { inputs, password, restrictions } => {
+            security::protect(&inputs, &password, restrictions.as_ref(), dest, ctx)
+        }
+        Request::Unlock { inputs, password } => security::unlock(&inputs, &password, dest, ctx),
+        Request::ExtractText { inputs, layout } => convert::extract_text(&inputs, layout, dest, ctx),
+        Request::OfficeToPdf { inputs } => convert::office_to_pdf(&inputs, dest, ctx),
+        Request::Annotate { input, items } => edit::annotate(&input, &items, dest, ctx),
+        Request::Ocr { inputs, options } => ocr::ocr(&inputs, options, dest, ctx),
     }
 }
 

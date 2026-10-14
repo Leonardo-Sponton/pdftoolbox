@@ -146,7 +146,7 @@ list.boxed-list > row {{ background: none; }}
 list.boxed-list > row:not(:last-child) {{ border-bottom: 1px solid alpha({borda}, 0.25); }}
 .tool-card {{ padding: 14px; }}
 button.card.tool-card:hover {{ background: alpha({acento}, 0.10); border-color: alpha({acento}, 0.7); }}
-.tool-card .tool-icon {{ color: {acento}; }}
+.tool-card .tool-icon, .icone-documento {{ color: {acento}; }}
 .thumb-rotated {{ color: {acento}; }}
 flowboxchild:selected .thumb {{ background: alpha({acento}, 0.22); box-shadow: inset 0 0 0 2px alpha({acento}, 0.8); }}
 .tool-card.sugerida {{ border-color: alpha({acento}, 0.9); box-shadow: inset 0 0 0 1px alpha({acento}, 0.5); }}
@@ -174,6 +174,8 @@ flowboxchild:selected .thumb {{ background: alpha({acento}, 0.22); box-shadow: i
 /* miniaturas: a página aparece como papel sobre o fundo */
 .miniatura {{ background: {pagina}; border-radius: 3px; box-shadow: 0 1px 3px alpha(black, 0.35); }}
 .miniatura-vazia {{ background: alpha({borda}, 0.18); border-radius: 3px; }}
+.miniatura-bloqueada {{ background-image: -gtk-icontheme("pdftoolbox-proteger-symbolic"); background-repeat: no-repeat;
+  background-position: center; background-size: 45%; color: {acento}; -gtk-icon-palette: success {acento}; }}
 .arquivo-card {{ padding: 10px; border-radius: 12px; background: alpha({fundo_header}, 0.85);
   border: 1px solid alpha({borda}, 0.5); }}
 .arquivo-card.problema {{ border-color: alpha({erro}, 0.7); }}

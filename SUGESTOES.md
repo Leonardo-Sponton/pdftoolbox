@@ -1,25 +1,39 @@
 # Sugestões futuras
 
-Anotações de 2026-10-14, ao fim da versão 0.1.0. A situação oficial de cada
+Anotações de 2026-10-14 (atualizadas na versão 0.3.0). A situação oficial de cada
 recurso continua em [FEATURE_MATRIX.md](FEATURE_MATRIX.md); aqui ficam as ideias
 e os próximos passos recomendados, em ordem de prioridade.
 
-## Próxima fase (2) — maior valor, menor risco
+## Fase 2 — o que falta (0.3.0 entregou senha, metadados, numeração, marca d’água, texto e Office)
 
-1. **PDFs com senha** — hoje são só detectados. Pedir a senha num diálogo e
-   passá-la ao qpdf com `--password-file` (nunca na linha de comando, que fica
-   visível em `/proc`). Na mesma leva: **proteger com senha** e **remover
-   proteção** (qpdf `--encrypt` / `--decrypt`), com teste que confirma que o
-   arquivo exige a senha configurada.
-2. **Metadados** — ver, editar e remover título/autor/datas (qpdf JSON).
-3. **Número de página e marca d’água** — gerar a sobreposição com o
-   `pdfwriter` próprio e aplicar com `qpdf --overlay`, sem rasterizar.
-4. **Extrair texto** (PDF → TXT) com `pdftotext`, já instalado.
-5. **Documentos do escritório → PDF** com LibreOffice headless (26.8 já
-   instalado). Usar um perfil temporário (`-env:UserInstallation=`) por
-   tarefa para não travar se o LibreOffice do usuário estiver aberto.
-6. **OCR** com Tesseract (`sudo pacman -S tesseract tesseract-data-por
-   tesseract-data-eng`), progresso por página e aviso de possíveis erros.
+1. ~~OCR~~ — feito. Próximos passos: **correção de inclinação** (a partir de
+   ~5° o Tesseract mistura linhas; dá para estimar o ângulo pelas linhas da
+   primeira leitura, endireitar a imagem, ler de novo e levar as caixas de
+   volta); mais idiomas (listar os instalados); “PDF para texto” oferecer o OCR
+   direto quando o arquivo é digitalizado.
+2. ~~Anotar e assinatura visual~~ — feito (“Anotar e assinar”). Pendências:
+   **testar o arrastar com o mouse** numa sessão real (aqui só o teclado foi
+   verificado); desfazer agrupando vários toques de seta num passo; zoom na
+   página; Esc no **Organizador** também descarta as alterações sem perguntar
+   (o Anotar já pergunta — aplicar o mesmo `can-pop` lá).
+3. **Abrir PDFs com senha direto nas ferramentas** (pedir a senha num diálogo
+   e trabalhar numa cópia temporária desbloqueada), em vez de mandar para
+   “Remover senha”.
+4. **Lote e fluxos** — já há lote por ferramenta; falta encadear (ex.:
+   numerar → marca d’água → proteger) num fluxo salvo.
+
+Decisões pendentes:
+- **PDFs só com restrições do autor** (abrem sem senha, mas proíbem editar):
+  as ferramentas estruturais da Fase 1 ainda os aceitam (o qpdf mantém a
+  criptografia na saída); Metadados e Proteger recusam. Decidir se Girar,
+  Numerar etc. devem recusar também quando “modificar” não é permitido.
+- **Marca d’água com outros alfabetos e símbolos**: hoje só WinAnsi (fontes
+  padrão). Para Unicode completo, embutir uma fonte livre (DejaVu/Noto) como
+  subconjunto — aumenta a complexidade do gerador de PDF.
+- **Marca d’água de imagem** (logotipo) e **cabeçalho/rodapé livre** com
+  campos como data e nome do arquivo.
+- **HTML → PDF** pelo LibreOffice foi deixado de fora: páginas web citam
+  recursos externos e a fidelidade é baixa; reavaliar com o isolamento de rede.
 
 ## Melhorias na versão atual
 
@@ -39,6 +53,8 @@ e os próximos passos recomendados, em ordem de prioridade.
   reduzida em vez de abrir a imagem inteira.
 - **Teste automatizado da fila** (limite de 2 tarefas) e do arrastar com mouse
   no organizador, que ainda não foram validados.
+- **Confirmar ao fechar com tarefa em andamento** — hoje fechar encerra os
+  motores e descarta a tarefa sem perguntar.
 
 ## Instalação e distribuição
 
@@ -51,7 +67,7 @@ e os próximos passos recomendados, em ordem de prioridade.
   ubuntu:24.04`, `apt install ./pdftoolbox_*.deb`, conferir `ldd`).
 - **Flatpak** — daria sandbox real aos motores, mas exige embutir qpdf e
   Poppler (obrigações de licença em LICENSES.md).
-- **Repositório git** e publicação no GitHub, como o MyNotes.
+- ~~Repositório git e publicação no GitHub~~ — feito: github.com/Leonardo-Sponton/pdftoolbox.
 
 ## Fase 3 e além
 

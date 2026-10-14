@@ -5,6 +5,7 @@
 use crate::error::{OpError, OpResult};
 use crate::operations::SplitMode;
 use crate::pages;
+use crate::stamp::{self, NumberFormat};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum MarkKind {
@@ -110,6 +111,52 @@ pub fn rotate(spec: &str, angle: i32, total: u32) -> OpResult<Plan> {
         format!("1 de {total} páginas será girada {how}; as demais ficam como estão.")
     } else {
         format!("{n} de {total} páginas serão giradas {how}; as demais ficam como estão.")
+    };
+    Ok(Plan { marks, summary })
+}
+
+/// Páginas escolhidas para um carimbo: `spec` vazio significa todas.
+fn stamped(spec: &str, total: u32) -> OpResult<Vec<u32>> {
+    if spec.trim().is_empty() { Ok((1..=total).collect()) } else { Ok(pages::parse_list(spec, total)?) }
+}
+
+/// Numerar: cada página escolhida mostra, no selo, o número que vai receber.
+/// Como na operação, a contagem segue a ordem das páginas (sem repetições).
+pub fn numbers(spec: &str, format: NumberFormat, first_number: u32, total: u32) -> OpResult<Plan> {
+    let mut chosen = dedup(&stamped(spec, total)?);
+    chosen.sort_unstable();
+    let last = first_number + chosen.len().saturating_sub(1) as u32;
+    let mut marks = vec![PageMark::normal(); total as usize];
+    for (k, &p) in chosen.iter().enumerate() {
+        let n = first_number + k as u32;
+        marks[p as usize - 1] =
+            PageMark { kind: MarkKind::Selected, badge: Some(stamp::number_text(format, n, last)), rotation: 0 };
+    }
+    let n = chosen.len();
+    let summary = match (n as u32 == total, n) {
+        (true, 1) => format!("A única página receberá o número {first_number}."),
+        (true, _) => format!("Todas as {total} páginas serão numeradas, de {first_number} a {last}."),
+        (false, 1) => format!("1 de {total} páginas receberá o número {first_number}; as demais ficam sem número."),
+        (false, _) => {
+            format!("{n} de {total} páginas serão numeradas, de {first_number} a {last}; as demais ficam sem número.")
+        }
+    };
+    Ok(Plan { marks, summary })
+}
+
+/// Marca d’água: páginas que recebem o texto.
+pub fn watermark(spec: &str, total: u32) -> OpResult<Plan> {
+    let chosen = dedup(&stamped(spec, total)?);
+    let mut marks = vec![PageMark::normal(); total as usize];
+    for &p in &chosen {
+        marks[p as usize - 1] = PageMark { kind: MarkKind::Selected, badge: Some("Marca".into()), rotation: 0 };
+    }
+    let n = chosen.len();
+    let summary = match (n as u32 == total, n) {
+        (true, 1) => "A única página receberá a marca d’água.".to_string(),
+        (true, _) => format!("Todas as {total} páginas receberão a marca d’água."),
+        (false, 1) => format!("1 de {total} páginas receberá a marca d’água."),
+        (false, _) => format!("{n} de {total} páginas receberão a marca d’água."),
     };
     Ok(Plan { marks, summary })
 }
@@ -236,6 +283,25 @@ pub fn toggle_page(spec: &str, page: u32, total: u32, ordered: bool) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn numbers_plan_shows_the_number_each_page_gets() {
+        let plan = numbers("4, 2-3", NumberFormat::NumberOfTotal, 1, 5).unwrap();
+        assert_eq!(plan.marks[0].kind, MarkKind::Normal);
+        assert_eq!(plan.marks[1].badge.as_deref(), Some("1 / 3"));
+        assert_eq!(plan.marks[3].badge.as_deref(), Some("3 / 3"));
+        assert!(plan.summary.starts_with("3 de 5 páginas serão numeradas, de 1 a 3"));
+        let all = numbers("", NumberFormat::Number, 10, 2).unwrap();
+        assert_eq!(all.marks[1].badge.as_deref(), Some("11"));
+        assert!(numbers("9", NumberFormat::Number, 1, 2).is_err());
+    }
+
+    #[test]
+    fn watermark_plan_marks_chosen_pages() {
+        let plan = watermark("2", 3).unwrap();
+        assert_eq!(plan.marks.iter().filter(|m| m.kind == MarkKind::Selected).count(), 1);
+        assert_eq!(watermark("", 3).unwrap().summary, "Todas as 3 páginas receberão a marca d’água.");
+    }
 
     #[test]
     fn rotate_marks_selected_pages() {

@@ -8,9 +8,14 @@ src/
 │   ├── catalog.rs    catálogo de ferramentas exibido na interface (só as reais)
 │   ├── engines/      adaptadores de executáveis externos
 │   │   ├── mod.rs    Tool, detecção no PATH, versão, execução com cancelamento
-│   │   ├── qpdf.rs   montar páginas, girar, otimizar, verificar, contar páginas
-│   │   ├── poppler.rs  renderizar página, miniaturas
-│   │   └── ghostscript.rs  reamostragem de imagens (pdfwrite, -dSAFER)
+│   │   ├── qpdf.rs   montar páginas, girar, otimizar, verificar, contar páginas,
+│   │   │             sobrepor camadas, criptografia, metadados (JSON v2)
+│   │   ├── poppler.rs  renderizar página, miniaturas, tamanhos, metadados, texto
+│   │   ├── ghostscript.rs  reamostragem de imagens (pdfwrite, -dSAFER)
+│   │   ├── libreoffice.rs  Office → PDF (perfil descartável, sem rede via unshare)
+│   │   └── tesseract.rs    OCR: palavras e linhas (TSV) e orientação da página
+│   ├── annotate.rs   anotações (texto, imagem, destaque, moldura): caixas em
+│   │                 pontos e a camada de cada página
 │   ├── error.rs      OpError: mensagem ao usuário (pt-BR) + detalhe técnico
 │   ├── jobs.rs       CancelToken, JobCtx (progresso), fila com limite de 2 tarefas
 │   ├── operations/   Request → Outcome; validação e gravação dos resultados
@@ -19,6 +24,9 @@ src/
 │   │                 a regra de posicionamento usada também pela pré-visualização
 │   ├── preview.rs    planos de pré-visualização: o que cada ferramenta fará com
 │   │                 cada página, com as mesmas regras das operações
+│   ├── secret.rs     senhas que nunca aparecem em Debug e são zeradas ao descartar
+│   ├── stamp.rs      numeração e marca d’água: texto WinAnsi, larguras da
+│   │                 Helvetica, posição → camada (`pdfwriter::overlay_pdf`)
 │   └── storage.rs    pasta temporária por tarefa, gravação atômica sem sobrescrever
 ├── main.rs           inicialização do GtkApplication
 build.rs              compila data/resources (ícones simbólicos) em GResource
@@ -27,7 +35,9 @@ build.rs              compila data/resources (ícones simbólicos) em GResource
     ├── home.rs       tela inicial: soltar arquivos, busca, recentes, categorias
     ├── tool_page.rs  página genérica: arquivos → opções → destino → executar → resultado
     ├── organizer.rs  grade de miniaturas com arrastar/soltar
-    ├── page_preview.rs  grade de páginas marcadas pelo plano; folhas de Imagens para PDF
+    ├── annotator.rs  Anotar e assinar: página grande (cairo), arrastar e teclado
+    ├── page_preview.rs  grade de páginas marcadas pelo plano; folhas de Imagens para PDF;
+    │                 “Como vai ficar” (página real com o carimbo); prévia de texto
     ├── page_thumb.rs widget de miniatura com o formato (e a rotação) da página
     ├── thumbs.rs     miniaturas e dados dos arquivos, em segundo plano, com cache em memória
     ├── theme.rs      paleta (MyNotes) gerada em CSS para libadwaita 1.5 e 1.6+
@@ -106,3 +116,66 @@ testes de `preview.rs` fixam essa equivalência. As miniaturas vêm do
 fora da thread da interface, e ficam só em memória (cache por caminho, data de
 modificação e página; esvaziado acima de 1500 itens). Os PNG intermediários do
 `pdftoppm` vivem numa `JobDir` apagada ao fim de cada lote.
+
+### Carimbos (numeração e marca d’água)
+
+`stamp.rs` calcula, para cada página, o texto e sua posição a partir do tamanho
+**exibido** (rotação aplicada, via `pdfinfo`). `pdfwriter::overlay_pdf` grava
+uma camada com uma página por página do documento, usando as fontes padrão
+Helvetica (sem embutir fonte) e transparência por `ExtGState`. O
+`qpdf --overlay` encaixa cada página da camada na página correspondente,
+respeitando a rotação, sem rasterizar nada. A prévia “Como vai ficar” roda
+exatamente o mesmo caminho para uma página e a renderiza com o `pdftoppm`.
+
+### OCR
+
+`operations/ocr.rs` descobre pelo `pdftotext` quais páginas não têm texto,
+renderiza cada uma em cinza (PGM, sem compressão — PNG custava 3,6 s por
+página digitalizada com ruído) e pede ao Tesseract só as palavras com suas
+caixas (TSV), até 4 páginas em paralelo, uma thread por processo. A camada de
+texto invisível é gerada aqui (`pdfwriter::invisible_text_pdf`), não pelo
+renderizador de PDF do Tesseract: ele inclina cada linha junto com a
+digitalização, e o Poppler quebra linhas inclinadas (a 1,2° “declaro” virava
+“decla” + “ro” e a busca falhava). Cada linha é escrita na horizontal, numa
+linha de base só, com as palavras esticadas (`Tz`) sobre a posição delas na
+imagem; a fonte é a `pdf.ttf` do Tesseract (sem desenho), com CID = UTF-16 e
+ToUnicode identidade. O qpdf sobrepõe a camada só às páginas reconhecidas.
+
+Páginas deitadas ou de cabeça para baixo: se a primeira leitura tem linhas na
+vertical ou confiança baixa, a detecção de orientação (`--psm 0`) decide quanto
+girar (com pouco texto, a direção das linhas ou a tentativa de 180°); a imagem
+é endireitada, lida de novo e a melhor leitura vence. A camada é escrita no
+sistema endireitado com uma matriz de volta ao da página e, com a opção
+padrão, a página é girada sem perda (`/Rotate`).
+
+### Anotações
+
+`annotate.rs` guarda cada anotação com o canto superior esquerdo em fração da
+página exibida e o tamanho em pontos (texto: calculado pelas larguras da
+Helvetica). A camada ganhou formas (`ShapeMark`, com `/BM /Multiply` no
+destaque) e imagens (`ImageMark`): cada imagem é gravada uma vez e citada por
+todas as páginas; com “remover fundo branco”, ela é decodificada e o papel
+claro vira canal alfa (`SMask`). Na interface, a prévia é desenhada com cairo
+sobre a página renderizada, com a mesma fonte e as mesmas caixas, para
+acompanhar o arrastar sem esperar o qpdf.
+
+### Senhas e metadados
+
+As senhas chegam à operação como `Secret` e vão ao qpdf por arquivos 0600 na
+pasta da tarefa (`--password-file`, `@arquivo` com as opções de `--encrypt`):
+nunca aparecem na lista de processos. “Remover senha” exige a senha e só
+remove restrições do autor com a senha de permissões, conferida por
+`qpdf --show-encryption`.
+
+Os metadados são gravados com `qpdf --update-from-json`: um dicionário de
+informações **novo** (cópia do atual com as alterações) e o trailer apontando
+para ele. Editar o objeto existente não funciona quando ele está dentro de um
+fluxo de objetos — o qpdf ignora a atualização sem erro —, e o trailer precisa
+manter `/Size`, senão a tabela de referências sai inválida.
+
+### Processos externos
+
+Cada motor roda no próprio grupo de processos. Cancelar envia `SIGKILL` ao
+grupo, o que alcança os filhos (o LibreOffice roda como `oosplash` →
+`soffice.bin`). Os grupos ativos ficam registrados e são encerrados quando o
+aplicativo sai, inclusive por SIGTERM/SIGINT.

@@ -29,6 +29,12 @@ fn filter_for(accepts: Accepts) -> gtk::FileFilter {
                 filter.add_mime_type(mime);
             }
         }
+        Accepts::Office => {
+            filter.set_name(Some("Documentos, planilhas e apresentações"));
+            for ext in catalog::OFFICE_EXTENSIONS {
+                filter.add_suffix(ext);
+            }
+        }
     }
     filter
 }
@@ -49,14 +55,15 @@ pub async fn pick_files(parent: &impl IsA<gtk::Window>, accepts: Option<Accepts>
         }
         None => {
             let all = gtk::FileFilter::new();
-            all.set_name(Some("PDFs e imagens"));
+            all.set_name(Some("PDFs, imagens e documentos"));
             all.add_suffix("pdf");
-            for ext in catalog::IMAGE_EXTENSIONS {
+            for ext in catalog::IMAGE_EXTENSIONS.iter().chain(catalog::OFFICE_EXTENSIONS) {
                 all.add_suffix(ext);
             }
             filters.append(&all);
             filters.append(&filter_for(Accepts::Pdf));
             filters.append(&filter_for(Accepts::Images));
+            filters.append(&filter_for(Accepts::Office));
         }
     }
     dialog.set_filters(Some(&filters));

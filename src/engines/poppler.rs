@@ -61,6 +61,30 @@ pub fn render_page(
     Ok(produced)
 }
 
+/// Renderiza uma página em tons de cinza, sem compressão (PGM), para o OCR:
+/// bem mais rápido que PNG em digitalizações com ruído. Devolve o caminho.
+pub fn render_gray(pdf: &Path, page: u32, dpi: u32, out_base: &Path, cancel: &CancelToken) -> OpResult<PathBuf> {
+    let p = page.to_string();
+    let args: Vec<OsString> = vec![
+        "-f".into(),
+        p.clone().into(),
+        "-l".into(),
+        p.into(),
+        "-r".into(),
+        dpi.to_string().into(),
+        "-gray".into(),
+        "-singlefile".into(),
+        pdf.into(),
+        out_base.into(),
+    ];
+    run_ok(Tool::Pdftoppm, args, &[0], cancel)?;
+    let produced = out_base.with_extension("pgm");
+    if !produced.is_file() {
+        return Err(OpError::OutputInvalid(format!("o pdftoppm não gerou a página {page}")));
+    }
+    Ok(produced)
+}
+
 /// Gera miniaturas PNG (lado maior = `size` px) das páginas `first..=last`
 /// em `dir`. Devolve os arquivos na ordem das páginas.
 pub fn thumbnails(
@@ -110,6 +134,96 @@ pub fn page_size(pdf: &Path, page: u32, cancel: &CancelToken) -> OpResult<(f32, 
         .ok_or_else(|| OpError::OutputInvalid(format!("o pdfinfo não informou o tamanho da página {page}")))
 }
 
+/// Tamanho exibido de todas as páginas, em uma única chamada ao `pdfinfo`.
+pub fn page_sizes(pdf: &Path, total: u32, cancel: &CancelToken) -> OpResult<Vec<(f32, f32)>> {
+    let args: Vec<OsString> = vec!["-f".into(), "1".into(), "-l".into(), total.to_string().into(), pdf.into()];
+    let out = run_ok(Tool::Pdfinfo, args, &[0], cancel)?;
+    let text = String::from_utf8_lossy(&out.stdout);
+    (1..=total)
+        .map(|page| {
+            parse_page_size(&text, page)
+                .ok_or_else(|| OpError::OutputInvalid(format!("o pdfinfo não informou o tamanho da página {page}")))
+        })
+        .collect()
+}
+
+/// Extrai o texto para `out` (UTF-8). `layout` mantém colunas e espaçamento
+/// aproximados da página; sem ele, o texto segue a ordem de leitura.
+pub fn extract_text(pdf: &Path, out: &Path, layout: bool, cancel: &CancelToken) -> OpResult<()> {
+    let mut args: Vec<OsString> = vec!["-enc".into(), "UTF-8".into()];
+    if layout {
+        args.push("-layout".into());
+    }
+    args.push(pdf.into());
+    args.push(out.into());
+    run_ok(Tool::Pdftotext, args, &[0], cancel)?;
+    Ok(())
+}
+
+/// Texto de uma página (para pré-visualizar), via saída padrão.
+pub fn page_text(pdf: &Path, page: u32, layout: bool, cancel: &CancelToken) -> OpResult<String> {
+    let p = page.to_string();
+    let mut args: Vec<OsString> =
+        vec!["-enc".into(), "UTF-8".into(), "-f".into(), p.clone().into(), "-l".into(), p.into()];
+    if layout {
+        args.push("-layout".into());
+    }
+    args.push(pdf.into());
+    args.push("-".into());
+    let out = run_ok(Tool::Pdftotext, args, &[0], cancel)?;
+    Ok(String::from_utf8_lossy(&out.stdout).into_owned())
+}
+
+/// Texto de cada página, em ordem (o `pdftotext` separa páginas com form feed).
+pub fn texts_per_page(pdf: &Path, total: u32, cancel: &CancelToken) -> OpResult<Vec<String>> {
+    let args: Vec<OsString> = vec!["-enc".into(), "UTF-8".into(), pdf.into(), "-".into()];
+    let out = run_ok(Tool::Pdftotext, args, &[0], cancel)?;
+    let text = String::from_utf8_lossy(&out.stdout);
+    let mut pages: Vec<String> = text.split('\x0C').take(total as usize).map(str::to_string).collect();
+    pages.resize(total as usize, String::new());
+    Ok(pages)
+}
+
+/// Metadados do dicionário de informações do documento.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct DocInfo {
+    pub title: String,
+    pub author: String,
+    pub subject: String,
+    pub keywords: String,
+    pub creator: String,
+    pub producer: String,
+    /// Datas em ISO 8601, como o `pdfinfo -isodates` informa.
+    pub created: String,
+    pub modified: String,
+}
+
+pub fn doc_info(pdf: &Path, cancel: &CancelToken) -> OpResult<DocInfo> {
+    let args: Vec<OsString> = vec!["-isodates".into(), "-enc".into(), "UTF-8".into(), pdf.into()];
+    let out = run_ok(Tool::Pdfinfo, args, &[0], cancel)?;
+    Ok(parse_doc_info(&String::from_utf8_lossy(&out.stdout)))
+}
+
+fn parse_doc_info(text: &str) -> DocInfo {
+    let mut info = DocInfo::default();
+    for line in text.lines() {
+        let Some((key, value)) = line.split_once(':') else { continue };
+        let value = value.trim().to_string();
+        match key {
+            "Title" => info.title = value,
+            "Author" => info.author = value,
+            "Subject" => info.subject = value,
+            "Keywords" => info.keywords = value,
+            "Creator" => info.creator = value,
+            "Producer" => info.producer = value,
+            "CreationDate" => info.created = value,
+            "ModDate" => info.modified = value,
+            _ => {}
+        }
+    }
+    info
+}
+
 fn parse_page_size(text: &str, page: u32) -> Option<(f32, f32)> {
     let prefix = format!("Page {page:>4} ");
     let mut size = None;
@@ -128,7 +242,17 @@ fn parse_page_size(text: &str, page: u32) -> Option<(f32, f32)> {
 
 #[cfg(test)]
 mod tests {
-    use super::parse_page_size;
+    use super::{DocInfo, parse_doc_info, parse_page_size};
+
+    #[test]
+    fn reads_document_info() {
+        let text = "Title:           Relatório: 2026\nAuthor:          Ana\nCreationDate:    2026-10-14T09:00:00-03\nPages:           3\n";
+        let info = parse_doc_info(text);
+        assert_eq!(info.title, "Relatório: 2026");
+        assert_eq!(info.author, "Ana");
+        assert_eq!(info.created, "2026-10-14T09:00:00-03");
+        assert_eq!(parse_doc_info("Pages: 1\n"), DocInfo::default());
+    }
 
     #[test]
     fn reads_size_and_rotation() {

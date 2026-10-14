@@ -10,5 +10,16 @@
     <file>icons/scalable/actions/pdftoolbox-imagens-para-pdf-symbolic.svg</file>
     <file>icons/scalable/actions/pdftoolbox-pdf-para-imagens-symbolic.svg</file>
     <file>icons/scalable/actions/pdftoolbox-comprimir-symbolic.svg</file>
+    <file>icons/scalable/actions/pdftoolbox-numerar-symbolic.svg</file>
+    <file>icons/scalable/actions/pdftoolbox-marca-dagua-symbolic.svg</file>
+    <file>icons/scalable/actions/pdftoolbox-metadados-symbolic.svg</file>
+    <file>icons/scalable/actions/pdftoolbox-proteger-symbolic.svg</file>
+    <file>icons/scalable/actions/pdftoolbox-remover-senha-symbolic.svg</file>
+    <file>icons/scalable/actions/pdftoolbox-pdf-para-texto-symbolic.svg</file>
+    <file>icons/scalable/actions/pdftoolbox-office-para-pdf-symbolic.svg</file>
+    <file>icons/scalable/actions/pdftoolbox-anotar-symbolic.svg</file>
+    <file>icons/scalable/actions/pdftoolbox-marca-texto-symbolic.svg</file>
+    <file>icons/scalable/actions/pdftoolbox-moldura-symbolic.svg</file>
+    <file>icons/scalable/actions/pdftoolbox-ocr-symbolic.svg</file>
   </gresource>
 </gresources>

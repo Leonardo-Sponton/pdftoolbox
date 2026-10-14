@@ -1,5 +1,78 @@
 # Changelog
 
+## 0.3.0 — 2026-10-14
+
+Fase 2 completa: nove ferramentas novas — numerar, marca d’água, metadados,
+proteger e remover senha, PDF para texto, Office para PDF, anotar e assinar,
+e OCR — todas com operação real, testes que conferem o conteúdo do resultado e
+fluxo verificado na interface.
+
+### Adicionado
+- **Numerar páginas:** 6 posições, formatos “1”, “1 / 10” e “Página 1 de 10”,
+  número inicial, tamanho do texto e escolha das páginas (“2-” pula a capa).
+  Cada miniatura mostra o número que vai receber.
+- **Marca d’água:** texto na diagonal ou na horizontal, cor, opacidade,
+  tamanho e páginas.
+- **“Como vai ficar”:** em Numerar e Marca d’água, a primeira página afetada é
+  renderizada com o resultado real (mesmo código da operação), atualizada
+  enquanto se digita.
+- **Editar metadados:** título, autor, assunto e palavras-chave, preenchidos com
+  os valores atuais; mostra programa de criação, produtor e datas; opção de
+  apagar todos os metadados (Info e XMP).
+- **Proteger com senha:** AES-256, confirmação da senha, aviso de senha curta e
+  restrições opcionais (imprimir, copiar, editar) com senha de permissões.
+- **Remover senha:** para documentos cuja senha se conhece; restrições do autor
+  só saem com a senha de permissões.
+- **PDF para texto:** `.txt` em UTF-8, na ordem de leitura ou mantendo o layout,
+  com prévia da página 1; digitalizações são identificadas em vez de gerar
+  arquivo vazio.
+- **Office para PDF:** Word, Excel, PowerPoint, LibreOffice, RTF, CSV e TXT, via
+  LibreOffice, isolado da rede quando o sistema permite.
+- Categorias **Editar** e **Segurança** na tela inicial; ícones novos.
+- Tela inicial aceita documentos do Office (cartão com ícone) e mostra
+  “🔒 Protegido por senha” com um cadeado na miniatura; se houver PDF
+  protegido, a sugestão é “Remover senha”.
+- **Anotar e assinar:** escreva textos (várias linhas, tamanho, negrito, cor),
+  a data de hoje, destaques que não escondem o texto, molduras e a imagem da
+  sua assinatura (com remoção do papel claro em volta). A página aparece
+  grande; arraste para mover, puxe o canto para redimensionar, ou use o
+  teclado (setas, Shift+setas, + e −, Delete, Tab, Page Up/Down, Ctrl+Z).
+  Opção de repetir em todas as páginas (rubrica). Gravado como camada
+  sobreposta, sem rasterizar o documento.
+- Ao sair (Voltar, Esc, abrir outro PDF) com anotações não salvas, o
+  programa pergunta antes de descartar.
+- **OCR — reconhecer texto** (Tesseract, português e inglês): torna
+  pesquisável e copiável o texto de digitalizações. As imagens não são
+  alteradas; uma camada de texto invisível é adicionada por cima. Pula
+  páginas que já têm texto, endireita páginas deitadas ou de cabeça para baixo,
+  mostra antes quantas páginas serão reconhecidas e avisa que o resultado pode
+  ter erros.
+- PDFs sem texto selecionável aparecem como tal na tela inicial e nas listas de
+  arquivos; se todos forem digitalizações, a sugestão é o OCR.
+
+### Alterado
+- “PDF para texto” indica o OCR quando o arquivo é uma digitalização.
+- PDFs protegidos nas demais ferramentas: a linha do arquivo e a
+  pré-visualização explicam o motivo e indicam “Remover senha”.
+- Avisos de formulário distinguem “falta preencher” (discreto) de “valor
+  errado” (vermelho).
+- Ao executar, o foco do teclado vai para **Cancelar** e volta ao botão
+  principal no fim (antes ia para o botão Voltar).
+- Cancelar encerra o grupo de processos inteiro do motor; fechar o programa
+  (inclusive por SIGTERM/SIGINT) encerra motores em execução.
+- Texto do destino: “nome (2)” em vez de “nome (2).pdf”, pois nem toda saída é PDF.
+
+### Corrigido
+- Organizador: a miniatura de uma página em paisagem girada invadia o número
+  abaixo dela; o selo “↻ 90°” e o destaque da seleção não usavam a cor de
+  acento da paleta (o selo ficava quase invisível no tema escuro).
+- Metadados gravados com fuso UTC apareciam com a hora errada; agora usam o
+  fuso local, como os demais programas.
+
+### Documentação
+- README em inglês, com capturas de tela nos temas claro e escuro; arquivo
+  `LICENSE` (GPL-3.0); publicação no GitHub.
+
 ## 0.2.0 — 2026-10-14
 
 Informação visual para decidir antes de executar (heurísticas de Nielsen:
@@ -39,8 +112,6 @@ visibilidade do estado, prevenção de erros, reconhecimento em vez de memória)
   leitura do tamanho de página).
 
 ### Alterado
-- README reescrito em inglês, com capturas de tela nos temas claro e escuro;
-  arquivo `LICENSE` (GPL-3.0) adicionado para publicação no GitHub.
 - **Novo nome: PDFToolbox** (antes “Oficina PDF”). Mudam também o binário
   (`pdftoolbox`), o identificador (`io.github.leonardo_sponton.PDFToolbox`) e as
   pastas `~/.config/pdftoolbox` e `~/.cache/pdftoolbox`. As entradas antigas
@@ -56,9 +127,6 @@ visibilidade do estado, prevenção de erros, reconhecimento em vez de memória)
   estiver fora de vista.
 - Organizador: após girar/duplicar com várias páginas selecionadas (ex.: Ctrl+A,
   Ctrl+R) a grade voltava ao início; o foco agora fica na página atual.
-- Organizador: a miniatura de uma página em paisagem girada invadia o número
-  abaixo dela; o selo “↻ 90°” e o destaque da seleção não usavam a cor de
-  acento da paleta (o selo ficava quase invisível no tema escuro).
 
 ## 0.1.0 — 2026-10-14
 

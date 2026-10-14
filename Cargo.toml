@@ -1,6 +1,6 @@
 [package]
 name = "pdftoolbox"
-version = "0.2.0"
+version = "0.3.0"
 edition = "2024"
 rust-version = "1.85"
 description = "Suíte local de documentos PDF para Linux (GTK4/libadwaita)"
@@ -14,7 +14,9 @@ gtk = { package = "gtk4", version = "0.11", features = ["v4_12"] }
 adw = { package = "libadwaita", version = "0.9", features = ["v1_5"] }
 async-channel = "2"
 flate2 = "1"
-image = { version = "0.25", default-features = false, features = ["png", "jpeg", "bmp", "gif", "webp", "tiff"] }
+image = { version = "0.25", default-features = false, features = ["png", "jpeg", "bmp", "gif", "webp", "tiff", "pnm"] }
+libc = "0.2"
+serde_json = "1"
 
 [profile.release]
 lto = "thin"
@@ -24,9 +26,9 @@ codegen-units = 4
 maintainer = "Leonardo <230742162+Leonardo-Sponton@users.noreply.github.com>"
 section = "graphics"
 priority = "optional"
-extended-description = "Mescle, divida, organize, converta e comprima PDFs localmente, sem enviar arquivos para a internet."
+extended-description = "Mescle, divida, organize, numere, proteja, converta e comprima PDFs localmente, sem enviar arquivos para a internet."
 depends = "libgtk-4-1 (>= 4.12), libadwaita-1-0 (>= 1.5), qpdf, poppler-utils"
-recommends = "ghostscript"
+recommends = "ghostscript, libreoffice-writer, libreoffice-calc, libreoffice-impress, tesseract-ocr, tesseract-ocr-por"
 assets = [
     ["target/release/pdftoolbox", "usr/bin/", "755"],
     ["data/io.github.leonardo_sponton.PDFToolbox.desktop", "usr/share/applications/", "644"],

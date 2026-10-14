@@ -1,6 +1,7 @@
 //! Interface GTK4/libadwaita. Nenhum processamento acontece aqui: as páginas
 //! montam uma `Request` e a entregam a `pdftoolbox::jobs::spawn`.
 
+mod annotator;
 mod dialogs;
 mod home;
 mod organizer;
@@ -54,6 +55,7 @@ impl AppState {
         }
         let page = match info.id {
             ToolId::Organize => organizer::build(self, files),
+            ToolId::Annotate => annotator::build(self, files),
             _ => tool_page::build(self, info, files),
         };
         self.nav.push(&page);
