@@ -15,14 +15,16 @@ machine.
 > **Language note:** the user interface is available in **English** and
 > **Brazilian Portuguese**. By default it follows the system language
 > (anything other than English or Portuguese falls back to Portuguese); pick
-> one under **Menu → Language · Idioma**. This README is in English; the other
-> project documents ([ARCHITECTURE](ARCHITECTURE.md), [SECURITY](SECURITY.md),
+> one under **Menu → Language · Idioma** and it changes right away, no restart
+> needed. This README is in English; the other project documents
+> ([ARCHITECTURE](ARCHITECTURE.md), [SECURITY](SECURITY.md),
 > [CHANGELOG](CHANGELOG.md), …) are in Portuguese.
 
 ## Screenshots
 
 The app follows your system's light/dark preference (or you can pick one in
-the menu). The screenshots below use made-up sample documents.
+the menu). The screenshots below show the English interface and use made-up
+sample documents.
 
 ### Home: drop files, see what you picked, get a suggested tool
 
@@ -43,7 +45,7 @@ Type a page range or click the thumbnails. The preview shows the pages
 actually rotated before you save. Extract, Remove and Split have the same
 kind of preview.
 
-### Organize pages: reorder, rotate, duplicate and delete visually
+### Organize pages: reorder, rotate, duplicate, delete and insert blank pages visually
 
 | Dark | Light |
 |---|---|
@@ -58,6 +60,16 @@ kind of preview.
 "How it will look" renders the page with the exact code that will produce the
 file, and updates as you type.
 
+### Annotate and sign: text, date, highlights and your signature
+
+| Dark | Light |
+|---|---|
+| ![Annotate tool with a highlight, a text note and today's date on the first page, dark theme](docs/screenshots/annotate-dark.png) | ![Annotate tool with a highlight, a text note and today's date on the first page, light theme](docs/screenshots/annotate-light.png) |
+
+Add an annotation and drag it into place (or move it with the arrow keys).
+The panel on the right edits the selected one, and every annotation is listed
+below it.
+
 ### Merge PDFs and convert images to PDF
 
 | Dark | Light |
@@ -65,17 +77,19 @@ file, and updates as you type.
 | ![Merge tool with three PDFs, dark theme](docs/screenshots/merge-dark.png) | ![Merge tool with three PDFs, light theme](docs/screenshots/merge-light.png) |
 | ![Images to PDF with page layout preview, dark theme](docs/screenshots/images-to-pdf-dark.png) | ![Images to PDF with page layout preview, light theme](docs/screenshots/images-to-pdf-light.png) |
 
+Drag a file by its handle (⠿) to change the order, or use the arrows.
+
 ## Features
 
 | Tool | What it does |
 |---|---|
 | **Organize pages** | Thumbnails, multi-select, drag to reorder, rotate, duplicate, delete, insert blank pages, enlarge a page, undo, keyboard shortcuts; asks before discarding unsaved changes |
-| **Merge PDFs** | Combine files in any order; the same file can be added more than once |
+| **Merge PDFs** | Combine files in any order (drag the rows or use the arrows); the same file can be added more than once |
 | **Split PDF** | By ranges (`1-3, 4-8, 9-`), every N pages, or one file per page |
 | **Extract pages** | Into one PDF (in the order you type) or one file per page |
 | **Remove pages** | Delete specific pages and keep the rest |
 | **Rotate PDF** | All pages or just some, across several files at once |
-| **Images to PDF** | JPEG, PNG, WebP, GIF, BMP, TIFF; A4 / Letter / image size; margins; JPEGs embedded without recompression; EXIF orientation; transparency |
+| **Images to PDF** | JPEG, PNG, WebP, GIF, BMP, TIFF, reordered by dragging; A4 / Letter / image size; margins; JPEGs embedded without recompression; EXIF orientation; transparency |
 | **PDF to images** | PNG, JPEG (adjustable quality) or TIFF, 36–1200 DPI, in batch |
 | **Compress PDF** | Lossless (qpdf) or with image downsampling (Ghostscript) at 150 ppi, 96 ppi or a custom resolution; estimates the result size before running; shows the savings and skips the output when there is no gain |
 | **Number pages** | 6 positions, formats `1` · `1 / 10` · `Página 1 de 10`, starting number, text size, choose the pages (`2-` skips the cover) |
@@ -138,7 +152,7 @@ plus the command-line tools the app uses under the hood:
 | Tesseract + Portuguese/English data *(optional)* | OCR |
 | A C toolchain + `pkg-config` | Compiling the GTK bindings |
 
-Tools whose optional component is missing show "Requer …" ("Requires …") on their card and
+Tools whose optional component is missing show "Requires …" on their card and
 tell you what to install; everything else keeps working.
 
 **Arch Linux / Manjaro / EndeavourOS** (tested)
@@ -221,14 +235,13 @@ Settings are stored in `~/.config/pdftoolbox/` and temporary files in
 `~/.cache/pdftoolbox/`. Uninstalling keeps them; delete those folders if you
 want a clean slate.
 
-If something is missing, open the menu (☰) → **Dependências**
-("Dependencies"). It lists what is installed, the versions found and the
+If something is missing, open the menu (☰) → **Dependencies**. It lists what is installed, the versions found and the
 command to install anything missing on your distribution. The app never runs
 `sudo` by itself.
 
 ## Usage
 
-1. Drag files onto the window, or click **Abrir** ("Open").
+1. Drag files onto the window, or click **Open**.
 2. Pick a tool. The suggested one is highlighted, and tools that can't handle
    your files are dimmed.
 3. Check the preview, adjust the options and the destination folder, and
@@ -300,8 +313,9 @@ Times include verifying the result and writing it safely.
 ## Known limitations
 
 - **Two interface languages** (English and Portuguese). The language changes
-  the interface only: generated file names (“report - comprimido.pdf”) and
-  the “Página 1 de 10” page-number format stay in Portuguese. Tool pages that
+  the interface only: generated file names (“report - comprimido.pdf”), the
+  “Página 1 de 10” page-number format and the day/month/year order of
+  **Today's date** in Annotate stay the same in both languages. Tool pages that
   are already open when you switch keep the previous language until reopened,
   and GTK’s own texts (text-field context menu, parts of the About dialog)
   follow the new choice after a restart.
