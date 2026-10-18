@@ -3,6 +3,10 @@
 ## Não lançado
 
 ### Adicionado
+- **Tema minimalista** (Menu → Tema → Minimalista): escuro e quase sem cor —
+  cinzas, branco como destaque, cartões sem contorno, botões sem fundo e
+  cantos menores; ok/aviso/erro continuam coloridos, atenuados. Gravado como
+  `tema=minimalista`.
 - **Interface em inglês**, além do português. Na primeira execução o
   aplicativo segue o idioma do sistema (`LANGUAGE`, `LC_ALL`, `LC_MESSAGES`,
   `LANG` ou `/etc/locale.conf`; outros idiomas ficam em português). Em

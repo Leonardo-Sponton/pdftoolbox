@@ -22,8 +22,8 @@ machine.
 
 ## Screenshots
 
-The app follows your system's light/dark preference (or you can pick one in
-the menu). The screenshots below show the English interface and use made-up
+The app follows your system's light/dark preference (or you can pick Light,
+Dark or a grayscale Minimal theme in the menu). The screenshots below show the English interface and use made-up
 sample documents.
 
 ### Home: drop files, see what you picked, get a suggested tool

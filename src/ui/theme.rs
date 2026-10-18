@@ -1,6 +1,8 @@
 //! Paleta de cores. O modo escuro usa a paleta do MyNotes (tema Retroma:
 //! azul-marinho profundo, lilás e acento roxo); o modo claro é uma variante
 //! com os mesmos tons, escurecidos para manter o contraste sobre fundo claro.
+//! O minimalista é escuro e quase sem cor (a mesma ideia do tema Minimal do
+//! Polaris): cinzas, branco como acento e formas mais planas.
 //!
 //! A libadwaita 1.6+ usa variáveis CSS (`--window-bg-color`); a 1.5 (Ubuntu
 //! 24.04) usa cores nomeadas (`@define-color`). Geramos a forma certa em
@@ -27,6 +29,8 @@ pub struct Palette {
     pub page: &'static str,
     /// Cores dos arquivos gerados (dividir), na ordem roxo, ciano, laranja…
     pub groups: [&'static str; 8],
+    /// Formas planas: cartões sem contorno, botões sem fundo, títulos em cinza.
+    pub flat: bool,
 }
 
 /// Paleta do MyNotes (Obsidian Retroma, esquema escuro).
@@ -50,6 +54,7 @@ pub const DARK: Palette = Palette {
     error: "#f0857a",
     page: "#f4f2fb",
     groups: ["#a67cff", "#7fd1d8", "#daa069", "#8fd3a0", "#f08fc0", "#6fa8ff", "#e0c07a", "#e6958c"],
+    flat: false,
 };
 
 /// Variante clara com os mesmos matizes (contraste ≥ 4,5:1 para texto).
@@ -73,6 +78,32 @@ pub const LIGHT: Palette = Palette {
     error: "#c0392b",
     page: "#ffffff",
     groups: ["#6a3dd8", "#11798a", "#a85d10", "#1f7a47", "#b0306f", "#2d62c4", "#8a6d12", "#b5483d"],
+    flat: false,
+};
+
+/// Escuro e quase sem cor: cinzas, branco como acento; as cores de estado
+/// (ok, aviso, erro) ficam, atenuadas. Texto com contraste ≥ 4,5:1.
+pub const MINIMAL: Palette = Palette {
+    background: "#111113",
+    background_dark: "#0b0b0c",
+    background_header: "#111113",
+    text: "#b9b9be",
+    text_strong: "#ececee",
+    dim: "#85858c",
+    accent: "#e6e6e9",
+    accent_hover: "#ffffff",
+    accent_fg: "#0b0b0c",
+    border: "#3a3a40",
+    button_border: "#2a2a2f",
+    button_checked: "#1d1d21",
+    h1: "#cf9a92",
+    h2: "#c9a57a",
+    h3: "#c8b88a",
+    ok: "#96bfa0",
+    error: "#d98b81",
+    page: "#f2f2f3",
+    groups: ["#e6e6e9", "#98c0c4", "#c9a57a", "#96bfa0", "#c99ab4", "#94a9cf", "#c8b88a", "#cf9a92"],
+    flat: true,
 };
 
 fn uses_variables() -> bool {
@@ -232,11 +263,81 @@ button.tirar-arquivo:hover {{ color: {erro}; border-color: {erro}; background: {
             c.accent_fg
         ));
     }
+    if c.flat {
+        s.push_str(&flat_css(c));
+    }
     s
 }
 
+/// Ajustes de forma do tema minimalista. Vêm depois do CSS principal e
+/// repetem os seletores dele, para vencer na mesma especificidade.
+fn flat_css(c: &Palette) -> String {
+    format!(
+        r#"
+/* minimalista: formas planas */
+button {{ border-radius: 6px; }}
+:not(splitbutton) > button:not(.flat):not(.toggle):not(.suggested-action):not(.destructive-action):not(.card):not(.image-button):not(.pill) {{
+  background: transparent; border-color: {borda_botao}; }}
+:not(splitbutton) > button:not(.flat):not(.toggle):not(.suggested-action):not(.destructive-action):not(.card):hover {{
+  background: {hover}; border-color: {borda_botao}; }}
+button.flat:hover {{ background: {hover}; }}
+button:checked {{ box-shadow: inset 0 0 0 1px alpha({acento}, 0.5); }}
+button.suggested-action, splitbutton.suggested-action > button, splitbutton.suggested-action > menubutton > button {{
+  font-weight: 600; }}
+headerbar {{ background: {fundo_janela}; border-bottom: 1px solid {linha}; }}
+.card, list.boxed-list {{ border-color: transparent; border-radius: 8px; }}
+list.boxed-list > row:not(:last-child) {{ border-bottom-color: {linha}; }}
+button.card.tool-card:hover {{ background: {hover}; border-color: transparent; }}
+.tool-card .tool-icon, .icone-documento, .thumb-rotated {{ color: {texto_forte}; }}
+.tool-card.sugerida {{ border-color: alpha({acento}, 0.6); box-shadow: none; }}
+.titulo-pagina {{ color: {texto_forte}; font-weight: 500; }}
+.category-title {{ color: {fraco}; font-weight: 500; }}
+.drop-zone {{ border: 1px dashed alpha({borda}, 0.9); border-radius: 8px; background-image: none; }}
+.arquivo-card {{ border-color: transparent; border-radius: 8px; background: {fundo_header}; }}
+.arquivo-card.problema {{ border-color: alpha({erro}, 0.7); }}
+.linha-arrastada {{ border-radius: 8px; }}
+.badge.acento {{ background: none; }}
+"#,
+        fundo_janela = c.background_dark,
+        fundo_header = c.background_header,
+        texto_forte = c.text_strong,
+        fraco = c.dim,
+        acento = c.accent,
+        borda = c.border,
+        borda_botao = c.button_border,
+        erro = c.error,
+        hover = "#17171a",
+        linha = "#1f1f22",
+    )
+}
+
+thread_local! {
+    static MINIMAL_ON: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+    static PROVIDER: std::cell::RefCell<Option<gtk::CssProvider>> = const { std::cell::RefCell::new(None) };
+}
+
 pub fn current() -> &'static Palette {
-    if adw::StyleManager::default().is_dark() { &DARK } else { &LIGHT }
+    if MINIMAL_ON.get() {
+        &MINIMAL
+    } else if adw::StyleManager::default().is_dark() {
+        &DARK
+    } else {
+        &LIGHT
+    }
+}
+
+/// Liga ou desliga a paleta minimalista (o modo escuro é do StyleManager).
+pub fn set_minimal(on: bool) {
+    MINIMAL_ON.set(on);
+    reload();
+}
+
+fn reload() {
+    PROVIDER.with_borrow(|p| {
+        if let Some(p) = p {
+            p.load_from_string(&css(current()));
+        }
+    });
 }
 
 /// Instala a paleta e a mantém sincronizada com o modo claro/escuro.
@@ -245,5 +346,6 @@ pub fn install(display: &gtk::gdk::Display) {
     provider.load_from_string(&css(current()));
     // Acima do tema (APPLICATION) para vencer as cores do Adwaita.
     gtk::style_context_add_provider_for_display(display, &provider, gtk::STYLE_PROVIDER_PRIORITY_APPLICATION + 1);
-    adw::StyleManager::default().connect_dark_notify(move |_| provider.load_from_string(&css(current())));
+    PROVIDER.set(Some(provider));
+    adw::StyleManager::default().connect_dark_notify(|_| reload());
 }

@@ -13,6 +13,8 @@ pub enum Theme {
     System,
     Light,
     Dark,
+    /// Escuro, em cinzas e com formas planas (veja theme::MINIMAL).
+    Minimal,
 }
 
 impl Theme {
@@ -21,6 +23,7 @@ impl Theme {
             Theme::System => "sistema",
             Theme::Light => "claro",
             Theme::Dark => "escuro",
+            Theme::Minimal => "minimalista",
         }
     }
 
@@ -28,15 +31,17 @@ impl Theme {
         match key {
             "claro" => Theme::Light,
             "escuro" => Theme::Dark,
+            "minimalista" => Theme::Minimal,
             _ => Theme::System,
         }
     }
 
     pub fn apply(self) {
+        super::theme::set_minimal(self == Theme::Minimal);
         adw::StyleManager::default().set_color_scheme(match self {
             Theme::System => adw::ColorScheme::Default,
             Theme::Light => adw::ColorScheme::ForceLight,
-            Theme::Dark => adw::ColorScheme::ForceDark,
+            Theme::Dark | Theme::Minimal => adw::ColorScheme::ForceDark,
         });
     }
 }
@@ -174,6 +179,14 @@ mod tests {
         let s = Settings::load_from(&dir.join("config"));
         assert_eq!(s, Settings::default());
         assert_eq!(s.language, Preference::System);
+    }
+
+    #[test]
+    fn every_theme_key_round_trips() {
+        for theme in [Theme::System, Theme::Light, Theme::Dark, Theme::Minimal] {
+            assert_eq!(Theme::from_key(theme.key()), theme);
+            assert_eq!(Settings::parse(&format!("tema={}\n", theme.key())).theme, theme);
+        }
     }
 
     #[test]

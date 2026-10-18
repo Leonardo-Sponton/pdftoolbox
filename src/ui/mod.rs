@@ -331,6 +331,7 @@ fn fill_primary_menu(menu: &gio::Menu) {
     theme.append(Some(tr!("Seguir o sistema")), Some("app.theme::sistema"));
     theme.append(Some(tr!("Claro")), Some("app.theme::claro"));
     theme.append(Some(tr!("Escuro")), Some("app.theme::escuro"));
+    theme.append(Some(tr!("Minimalista")), Some("app.theme::minimalista"));
     menu.append_section(Some(tr!("Tema")), &theme);
     // Os nomes dos idiomas ficam na própria língua, para serem achados
     // mesmo com a interface num idioma que a pessoa não lê.

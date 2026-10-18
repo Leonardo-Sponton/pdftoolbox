@@ -739,6 +739,7 @@ pub(super) const MESSAGES: &[(&str, &str)] = &[
     ("Seguir o sistema", "Follow the system"),
     ("Claro", "Light"),
     ("Escuro", "Dark"),
+    ("Minimalista", "Minimal"),
     ("Tema", "Theme"),
     ("Idioma · Language", "Language · Idioma"),
     ("Tarefas", "Tasks"),
